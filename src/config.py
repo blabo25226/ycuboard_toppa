@@ -14,6 +14,7 @@ DEFAULT_CONFIG: dict = {
     # 機能スイッチ（初期OFF）。ダウンロードは巡回(check)の結果を見て動くので、check が OFF なら定期実行されない。
     "check_enabled": False,  # 2. 定期チェック
     "download_enabled": False,  # 3. 更新があった資料の自動ダウンロード
+    "teams_enabled": False,  # 5. Teams（SharePoint）の講義資料も確認・ダウンロードする（ダウンロードは3.に従う）
     "email_enabled": True,  # 4. 結果メール
     "email_only_on_change": False,  # True なら、更新・保存・エラーがあったときだけ送る
     # 1日の巡回時刻（HH:MM）。回数も時刻も自由に増減できる。

@@ -262,6 +262,7 @@ def print_status() -> None:
     print("\n=== YCU-Board 自動チェック 設定 ===")
     print(f"  定期チェック      : {onoff(cfg['check_enabled'])}   (--check-on / --check-off)")
     print(f"  自動ダウンロード  : {onoff(cfg['download_enabled'])}   (--download-on / --download-off)")
+    print(f"  Teams の資料      : {onoff(cfg['teams_enabled'])}   (--teams-on / --teams-off)  ダウンロードは「自動ダウンロード」と対象講義に従う")
     when = "更新があったときだけ" if cfg["email_only_on_change"] else "毎回"
     print(f"  結果メール        : {onoff(cfg['email_enabled'])}   (--mail-on / --mail-off)  宛先: {mail} / {when} (--mail-changes-only / --mail-always)")
     print(f"  巡回時刻          : {', '.join(cfg['daily_run_times'])}  (1日{len(cfg['daily_run_times'])}回, --set-times)")
@@ -380,6 +381,8 @@ def build_parser() -> argparse.ArgumentParser:
     sw.add_argument("--check-off", action="store_true")
     sw.add_argument("--download-on", action="store_true")
     sw.add_argument("--download-off", action="store_true")
+    sw.add_argument("--teams-on", action="store_true", help="Teams（SharePoint）の講義資料も確認・ダウンロードする")
+    sw.add_argument("--teams-off", action="store_true", help="Teams の確認をやめる")
     sw.add_argument("--mail-on", action="store_true")
     sw.add_argument("--mail-off", action="store_true")
     sw.add_argument("--mail-changes-only", action="store_true", help="更新・保存・エラーがあったときだけメールする")
@@ -408,6 +411,10 @@ def apply_settings(args) -> bool:
         changes["download_enabled"] = True
     if args.off or args.download_off:
         changes["download_enabled"] = False
+    if args.teams_on:
+        changes["teams_enabled"] = True
+    if args.teams_off:
+        changes["teams_enabled"] = False
     if args.mail_on:
         changes["email_enabled"] = True
     if args.mail_off:

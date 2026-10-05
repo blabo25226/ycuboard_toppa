@@ -68,8 +68,24 @@ def build_report(summary: dict) -> tuple:
             lines += [f"  + 新規: {i['material_title']} / {i['file_name']} ({i['updated_on']})" for i in ch.new]
             lines += [f"  * {i['reason']}: {i['material_title']} / {i['file_name']} ({i['updated_on']})" for i in ch.updated]
             lines += [f"  - 削除: {i['material_title']} / {i['file_name']}" for i in ch.removed]
+    teams = summary.get("teams", [])
+    team_changed = [t for t in teams if t["changes"].changed or t["changes"].baseline]
+    if teams:
+        n_t_new = sum(len(t["changes"].new) for t in teams)
+        n_t_upd = sum(len(t["changes"].updated) for t in teams)
+        lines.append(f"Teams: {len(teams)} 講義のチームを確認 / 新規ファイル {n_t_new} 件 / 更新 {n_t_upd} 件")
+        lines.append("")
+    for t in team_changed:
+        ch = t["changes"]
+        if ch.baseline:
+            lines.append(f"■ {t['name']}（Teams）: 初回登録（ファイル {t['count']} 件を記録。次回から差分を通知）")
+            continue
+        lines.append(f"■ {t['name']}（Teams）")
+        lines += [f"  + 新規: {i['rel_path']} ({i['modified'][:10]})" for i in ch.new]
+        lines += [f"  * 更新: {i['rel_path']} ({i['modified'][:10]})" for i in ch.updated]
+        lines += [f"  - 削除: {i['rel_path']}" for i in ch.removed]
     cw_lines = coursework_lines(summary)
-    if not any(c["changes"].changed or c["changes"].baseline for c in summary["courses"]) and not cw_lines:
+    if not any(c["changes"].changed or c["changes"].baseline for c in summary["courses"]) and not cw_lines and not team_changed:
         lines.append("更新はありませんでした。")
 
     if cw_lines:
@@ -82,7 +98,8 @@ def build_report(summary: dict) -> tuple:
     if errors:
         lines += ["", "【エラー】"] + [f"  {e}" for e in errors]
 
-    flag = "初回監査完了" if summary.get("initial") else ("更新あり" if (n_new or n_upd or downloads or cw_lines) else "更新なし")
+    team_news = sum(len(t["changes"].new) + len(t["changes"].updated) for t in teams)
+    flag = "初回監査完了" if summary.get("initial") else ("更新あり" if (n_new or n_upd or downloads or cw_lines or team_news) else "更新なし")
     if errors:
         flag += "・エラーあり"
     return f"[YCU-Board] {flag} ({summary['started']:%m/%d %H:%M})", "\n".join(lines)

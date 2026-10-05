@@ -23,6 +23,7 @@ from src.mailer import send_email, send_report
 from src.mailer import build_login_alert
 from src.notifier import notify_login_failed, notify_new_material, notify_run_failed
 from src.state import load_state, now_iso, update_state
+from src.teams import run_teams
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,7 @@ def _run_cycle(context, *, download, targets, send_mail, scheduled, initial, dry
         "recovered": recovered,
         "initial": initial,
         "pending": [],
+        "teams": [],
     }
 
     crawler = YCUBoardCrawler(page)
@@ -140,6 +142,9 @@ def _run_cycle(context, *, download, targets, send_mail, scheduled, initial, dry
             logger.exception("講義の巡回に失敗: %s", course["name"])
             summary["errors"].append(f"{course['name']}: {e}")
 
+    if cfg["teams_enabled"] and courses:
+        run_teams(context, courses, target_ids, summary, dry_run=dry_run)
+
     if dry_run:
         return summary
     update_state(
@@ -153,7 +158,7 @@ def _run_cycle(context, *, download, targets, send_mail, scheduled, initial, dry
         notable = bool(summary["downloads"] or summary["errors"] or recovered) or any(
             c["changes"].changed or c["changes"].baseline or any(ch.changed for ch in c["coursework"].values())
             for c in summary["courses"]
-        )
+        ) or any(t["changes"].changed or t["changes"].baseline for t in summary.get("teams", []))
         if notable or not cfg["email_only_on_change"]:
             summary["mail"] = "sent" if send_report(summary, context) else "failed"
         else:
