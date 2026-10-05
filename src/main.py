@@ -26,7 +26,7 @@ from src.config import (
 )
 from src.crawler import YCUBoardCrawler
 from src.pipeline import run_cycle
-from src.schedule import in_maintenance, last_due_slot, missed_slot
+from src.schedule import in_maintenance, last_due_slot, missed_slot, planned_for
 from src.state import load_state, update_state
 from src.winutil import find_watchers, powershell, start_watcher, stop_watchers
 
@@ -249,6 +249,8 @@ def print_status() -> None:
     when = "更新があったときだけ" if cfg["email_only_on_change"] else "毎回"
     print(f"  結果メール        : {onoff(cfg['email_enabled'])}   (--mail-on / --mail-off)  宛先: {mail} / {when} (--mail-changes-only / --mail-always)")
     print(f"  巡回時刻          : {', '.join(cfg['daily_run_times'])}  (1日{len(cfg['daily_run_times'])}回, --set-times)")
+    jitter = f"ON（毎回 ±{cfg['jitter_max_minutes']}分の範囲でずらす）" if cfg["jitter_enabled"] else "OFF（設定した時刻ちょうど）"
+    print(f"  時刻の誤差        : {jitter}  (--jitter-on / --jitter-off)")
     print(f"  ダウンロード対象  : {targets}  (--set-courses)")
     print(f"  保存先            : {cfg['output_dir']}  (--set-output)")
 
@@ -280,6 +282,11 @@ def watch(headless: bool) -> None:
     print_status()
     done = set()  # (日付, 時刻) 実行済みスロット
     started = datetime.now()
+    # 起動前に予定時刻を過ぎていた枠は、下の取りこぼし補完か、仕様による見送りで済んでいるので、ループでは実行しない
+    for hm in load_config()["daily_run_times"]:
+        nominal = datetime.combine(started.date(), datetime.strptime(hm, "%H:%M").time())
+        if planned_for(nominal) <= started:
+            done.add((started.date(), hm))
 
     # PC を閉じていた・常駐が止まっていたなどで直近の予定を取りこぼしていたら、起動直後に1回補う
     cfg = load_config()
@@ -298,22 +305,26 @@ def watch(headless: bool) -> None:
         cfg = load_config()
         if cfg["check_enabled"]:
             for hm in cfg["daily_run_times"]:
-                slot = datetime.combine(now.date(), datetime.strptime(hm, "%H:%M").time())
                 key = (now.date(), hm)
+                if key in done:
+                    continue
+                nominal = datetime.combine(now.date(), datetime.strptime(hm, "%H:%M").time())
+                # 実際の実行予定 = 設定時刻 + 誤差（予定ごとに1回だけ決めて保存。誤差OFFなら設定時刻そのまま）
+                slot = planned_for(nominal, create=True, cfg=cfg)
                 late = now - slot
                 # 起動前に過ぎていた時刻は実行しない。起動後に過ぎた時刻は一定時間内なら実行する。
-                if key in done or late < timedelta(0) or slot < started - timedelta(minutes=1):
+                if late < timedelta(0) or slot < started - timedelta(minutes=1):
                     continue
                 done.add(key)
                 if late > timedelta(minutes=CATCH_UP_MINUTES):
                     # スリープ等で大きく遅れた予定は見送る（仕様）。--health が「固まっている」と誤判定しないよう記録する
                     logger.warning("%s の巡回は %d 分以上遅れたため見送りました（スリープ等）。", hm, CATCH_UP_MINUTES)
-                    update_state(skipped_slot=slot.isoformat(timespec="minutes"))
+                    update_state(skipped_slot=slot.isoformat(timespec="seconds"))
                     continue
                 if in_maintenance(now):
                     logger.warning("メンテナンス時間帯のため %s の巡回をスキップします。", hm)
                     continue
-                logger.info("定期巡回を開始します (%s)", hm)
+                logger.info("定期巡回を開始します (設定 %s / 予定 %s)", hm, slot.strftime("%H:%M:%S"))
                 try:
                     run_once(headless=headless, download=cfg["download_enabled"], scheduled=True)
                 except Exception:  # noqa: BLE001 - 常駐を止めない
@@ -355,6 +366,8 @@ def build_parser() -> argparse.ArgumentParser:
     sw.add_argument("--mail-on", action="store_true")
     sw.add_argument("--mail-off", action="store_true")
     sw.add_argument("--mail-changes-only", action="store_true", help="更新・保存・エラーがあったときだけメールする")
+    sw.add_argument("--jitter-on", action="store_true", help="実行時刻に誤差（±10分）を加える（初期値）")
+    sw.add_argument("--jitter-off", action="store_true", help="実行時刻に誤差を加えない（設定した時刻ちょうどに実行）")
     sw.add_argument("--mail-always", action="store_true", help="毎回メールする（初期値）")
     sw.add_argument("--on", action="store_true", help="チェックとダウンロードをまとめてON")
     sw.add_argument("--off", action="store_true", help="チェックとダウンロードをまとめてOFF")
@@ -384,6 +397,10 @@ def apply_settings(args) -> bool:
         changes["email_enabled"] = False
     if args.mail_changes_only:
         changes["email_only_on_change"] = True
+    if args.jitter_on:
+        changes["jitter_enabled"] = True
+    if args.jitter_off:
+        changes["jitter_enabled"] = False
     if args.mail_always:
         changes["email_only_on_change"] = False
     if args.set_courses is not None:

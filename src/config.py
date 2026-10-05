@@ -18,6 +18,11 @@ DEFAULT_CONFIG: dict = {
     "email_only_on_change": False,  # True なら、更新・保存・エラーがあったときだけ送る
     # 1日の巡回時刻（HH:MM）。回数も時刻も自由に増減できる。
     "daily_run_times": ["11:00", "17:00"],
+    # 実行時刻の誤差。全員が同じ時刻にアクセスして大学のサーバーに負荷が集中するのを避ける（毎日同じ時刻にもならない）。
+    # 予定時刻ごとに ±jitter_max_minutes 分の範囲で、標準偏差 jitter_sigma_minutes 分の正規分布からずらす。
+    "jitter_enabled": True,
+    "jitter_max_minutes": 10,
+    "jitter_sigma_minutes": 4,
     # ダウンロード対象の講義名（部分一致）。空なら全講義。
     "target_courses": [],
     "ycuboard_url": "https://ycuboard.yokohama-cu.ac.jp/",

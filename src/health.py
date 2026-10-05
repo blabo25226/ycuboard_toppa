@@ -40,7 +40,8 @@ def run_health() -> int:
     else:
         print("  常駐プロセス      : 動いていません")
     print(f"  巡回時刻          : {', '.join(times)}")
-    print(f"  次の予定          : {nxt:%m/%d %H:%M}" if nxt else "  次の予定          : なし")
+    jitter_note = f"（設定時刻から ±{cfg['jitter_max_minutes']}分の誤差あり）" if cfg["jitter_enabled"] else ""
+    print(f"  次の予定          : {nxt:%m/%d %H:%M}{jitter_note}" if nxt else "  次の予定          : なし")
     if last_run:
         print(f"  最終実行          : {last_run.replace('T', ' ')}（{RESULT_LABEL.get(result, '不明')}）")
         if result == "error" and state.get("last_error"):

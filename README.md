@@ -110,6 +110,7 @@ PC の電源が入っていてログオンしている間だけ動きます。�
 ```powershell
 python -m src.main --status                                  # 現在の設定を見る
 python -m src.main --set-times 9:00 13:00 21:00              # チェックする時刻（回数も自由）
+python -m src.main --jitter-off                              # 時刻の誤差を無効にする（初期は設定時刻の±10分でずらす）
 python -m src.main --set-courses 機械学習 統計モデリング1      # 資料を保存する講義を絞る（部分一致）
 python -m src.main --set-courses                             # 絞り込みを解除して全講義にする
 python -m src.main --set-output D:\講義資料                   # 保存先フォルダ（初期は output/）

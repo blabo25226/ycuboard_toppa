@@ -21,6 +21,7 @@
 - 画面構造が変わったらまず `crawler.py` の `_SCRAPE_MATERIALS_JS` とセレクタを疑う。
 
 ## 実装上の注意
+- 実行時刻の誤差は `schedule.planned_for`（予定ごとに1回だけ `draw_offset` で引いて state.json の `planned` に保存）。`last_due_slot` / `next_slot` / `--health` は誤差込みの予定時刻で判定する。起動時に「すでに予定を過ぎた枠」は処理済みとして扱い、補完との二重実行を避ける。
 - DB 接続は `diff_engine.get_connection()`（コミットして必ず閉じる）を使う。`sqlite3.connect` の `with` だけでは閉じず、Windows ではファイルがロックされる。
 - 差し替え（ID だけ変わった再アップロード）は、旧行の `local_path` を新しい行に引き継ぎ `downloaded_updated_on` を NULL にして「更新」として再取得させ、旧行は `removed=1` にする。
 - `config.json` と `state.json` は `config.write_atomic` で書く（常駐が書き込み途中を読まないように）。
