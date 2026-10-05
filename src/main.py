@@ -1,9 +1,12 @@
 """YCU-Board 資料チェック＆自動ダウンロードの CLI。 `python -m src.main --help` 参照。"""
 import argparse
+import base64
 import logging
+import subprocess
 import sys
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 
 # Windows の cp932 コンソールでも文字化け・例外を出さない
 for _stream in (sys.stdout, sys.stderr):
@@ -15,11 +18,14 @@ from playwright.sync_api import sync_playwright
 from src.auth import perform_full_login
 from src.config import (
     AUTH_PROFILE_DIR,
+    BASE_DIR,
+    ID_PASSWORD_PATH,
     load_config,
     is_in_maintenance,
     normalize_time,
     set_daily_run_times,
     update_config,
+    write_credentials,
 )
 from src.crawler import YCUBoardCrawler
 from src.pipeline import run_cycle
@@ -27,6 +33,16 @@ from src.pipeline import run_cycle
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s %(message)s", datefmt="%H:%M:%S")
 logger = logging.getLogger("YCUBoard")
 
+
+def enable_file_logging() -> None:
+    """常駐時のログを logs/ycuboard.log にも残す（ウィンドウ無しで動かすため）。"""
+    log_dir = BASE_DIR / "logs"
+    log_dir.mkdir(exist_ok=True)
+    handler = logging.FileHandler(log_dir / "ycuboard.log", encoding="utf-8")
+    handler.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s %(message)s"))
+    logging.getLogger().addHandler(handler)
+
+TASK_NAME = "YCUBoardWatcher"
 CATCH_UP_MINUTES = 120  # PCが寝ていて時刻を過ぎても、この時間内なら起動後に実行する
 
 
@@ -76,6 +92,52 @@ def do_list_courses(headless: bool) -> None:
     print("\n=== 履修中の講義 ===")
     for c in courses:
         print(f"  {c['name']}  ({c['id']})")
+
+
+def do_init() -> None:
+    """ID とパスワードを対話入力して id_password.txt を作る。"""
+    import getpass
+
+    if ID_PASSWORD_PATH.exists() and input(f"{ID_PASSWORD_PATH.name} は既にあります。上書きしますか？ [y/N] ").lower() != "y":
+        return
+    user_id = input("YCU の ID（例: d123456a ／ @yokohama-cu.ac.jp は不要）: ").strip()
+    password = getpass.getpass("パスワード（入力は表示されません）: ")
+    if not user_id or not password:
+        print("ID とパスワードの両方が必要です。")
+        return
+    write_credentials(user_id, password)
+    print(f"{ID_PASSWORD_PATH.name} を作成しました。次は: python -m src.main --login")
+
+
+def _powershell(script: str) -> subprocess.CompletedProcess:
+    # 日本語パスが文字化けしないよう UTF-16LE の Base64 で渡す
+    script = "$ProgressPreference = 'SilentlyContinue'\n" + script
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    return subprocess.run(["powershell", "-NoProfile", "-EncodedCommand", encoded], capture_output=True, text=True, errors="replace")
+
+
+def install_task() -> None:
+    """Windows ログオン時に `--watch` を自動起動するタスクを登録する（ウィンドウ無し）。"""
+    exe = Path(sys.executable)
+    pythonw = exe.with_name("pythonw.exe")
+    runner = pythonw if pythonw.exists() else exe
+    script = f"""
+    $a = New-ScheduledTaskAction -Execute '{runner}' -Argument '-m src.main --watch' -WorkingDirectory '{BASE_DIR}'
+    $t = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+    $s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero)
+    Register-ScheduledTask -TaskName '{TASK_NAME}' -Action $a -Trigger $t -Settings $s -Force | Out-Null
+    """
+    result = _powershell(script)
+    if result.returncode != 0:
+        print("タスクの登録に失敗しました:\n" + result.stderr.strip())
+        sys.exit(1)
+    print(f"登録しました。次回のログオンから自動で常駐します（タスク名: {TASK_NAME}）。")
+    print("今すぐ開始するには: Start-ScheduledTask -TaskName " + TASK_NAME + "（PowerShell）")
+
+
+def uninstall_task() -> None:
+    result = _powershell(f"Unregister-ScheduledTask -TaskName '{TASK_NAME}' -Confirm:$false")
+    print("自動起動の登録を解除しました。" if result.returncode == 0 else "登録されていません。")
 
 
 def onoff(value: bool) -> str:
@@ -129,6 +191,11 @@ def watch(headless: bool) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="YCU-Board 資料チェック＆自動ダウンロード")
+    setup = p.add_argument_group("セットアップ")
+    setup.add_argument("--init", action="store_true", help="ID とパスワードを入力して id_password.txt を作成")
+    setup.add_argument("--install-task", action="store_true", help="Windows ログオン時に --watch を自動起動する登録")
+    setup.add_argument("--uninstall-task", action="store_true", help="自動起動の登録を解除")
+
     run = p.add_argument_group("実行")
     run.add_argument("--login", action="store_true", help="ブラウザを表示してログイン（初回・セッション切れ時）")
     run.add_argument("--once", action="store_true", help="今すぐ1回チェックする（ON/OFF設定に関係なく実行）")
@@ -201,7 +268,13 @@ def main() -> None:
             print("※ 保存先の変更は次回起動から有効です。")
 
     headless = not args.headful
-    if args.login:
+    if args.init:
+        do_init()
+    elif args.install_task:
+        install_task()
+    elif args.uninstall_task:
+        uninstall_task()
+    elif args.login:
         do_login()
     elif args.list_courses:
         do_list_courses(headless)
@@ -212,6 +285,7 @@ def main() -> None:
             sys.exit(1)
         print(f"\n完了: 講義 {len(summary['courses'])} 件をチェック / ダウンロード {len(summary['downloads'])} 件")
     elif args.watch:
+        enable_file_logging()
         watch(headless)
     elif args.status or not changed:
         print_status()

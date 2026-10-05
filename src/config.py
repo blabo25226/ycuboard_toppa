@@ -97,28 +97,38 @@ def set_daily_run_times(times: List[str]) -> List[str]:
 
 
 # ---------- 認証情報 ----------
+EMAIL_DOMAIN = "yokohama-cu.ac.jp"
 _LABEL = r"(?:id|email|e-mail|mail|user|username|password|passwd|pass|pw)"
 
 
 def get_credentials() -> Tuple[str, str]:
     """
     id_password.txt から (メールアドレス, パスワード) を取り出す。
-    想定形式: 「id」などの見出し行 / メールアドレス / パスワード（見出し行や `id:` の接頭辞があっても可）。
-    @ を含む行をメールアドレス、その次の行をパスワードとみなす。
+    形式: `id` / ID / `password` / パスワード の4行（見出し行は省略可）。
+    ID は `d123456a` のように @ 以降を省いても、`d123456a@yokohama-cu.ac.jp` でもよい。
+    `id: xxx` のような接頭辞も許容する。
     """
     if not ID_PASSWORD_PATH.exists():
-        raise FileNotFoundError(f"認証情報ファイルが見つかりません: {ID_PASSWORD_PATH}")
+        raise FileNotFoundError(
+            f"認証情報ファイルが見つかりません: {ID_PASSWORD_PATH}\n"
+            "`python -m src.main --init` で作成するか、README の手順に従って作成してください。"
+        )
 
     values = []
     for line in ID_PASSWORD_PATH.read_text(encoding="utf-8-sig").splitlines():
         line = re.sub(rf"^{_LABEL}\s*[:：]\s*", "", line.strip(), flags=re.IGNORECASE)
         if line and not re.fullmatch(_LABEL, line, flags=re.IGNORECASE):
             values.append(line)
+    if len(values) < 2:
+        raise ValueError(f"{ID_PASSWORD_PATH.name} には ID とパスワードを1行ずつ書いてください。")
 
-    email_idx = next((i for i, v in enumerate(values) if "@" in v), None)
-    if email_idx is None or email_idx + 1 >= len(values):
-        raise ValueError(f"{ID_PASSWORD_PATH.name} からメールアドレスとパスワードを読み取れませんでした。")
-    return values[email_idx], values[email_idx + 1]
+    user_id, password = values[0], values[1]
+    email = user_id if "@" in user_id else f"{user_id}@{EMAIL_DOMAIN}"
+    return email, password
+
+
+def write_credentials(user_id: str, password: str) -> None:
+    ID_PASSWORD_PATH.write_text(f"id\n{user_id.strip()}\npassword\n{password}\n", encoding="utf-8")
 
 
 # ---------- メンテナンス ----------

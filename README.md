@@ -1,74 +1,111 @@
-# YCU-Board 資料チェック＆自動ダウンロード
+# YCU-Board 資料チェッカー
 
-YCU-Board（横浜市立大学 LMS）に自動ログインして履修講義の「教材」を定期チェックし、更新があれば指定した講義の資料を保存、結果をメールで報告します。
+YCU-Board（横浜市立大学 LMS）に自動でログインし、履修している講義の「教材」を決まった時刻にチェックします。更新があれば資料を自動で保存し、結果を自分のメールに送ります。
 
-## 準備
+- 対象は **自分のアカウントの履修講義だけ**です。履修講義は時間割から自動で取得するので、講義ごとの設定は要りません。
+- 認証情報（ID・パスワード）は **自分のPCの中だけ**に保存されます。外部には送りません。
+- 非公式のツールです。自分のアカウントで、自己責任で使ってください。大学のサーバーに負荷をかけないよう、アクセスの間隔をあけています。
 
-1. `id_password.txt` を作成する（`.gitignore` 済み）。
+## 必要なもの
 
-   ```
-   id
-   a111111a@yokohama-cu.ac.jp
-   パスワード
-   ```
-   1行目は見出し、2行目がメールアドレス（結果メールの宛先にも使います）、3行目がパスワードです。
-2. 依存をインストールする: `pip install playwright` と `playwright install chromium`
-3. 初回ログイン: `python -m src.main --login`
-   ブラウザが開き、ID・パスワードが自動入力されます。Authenticator の承認が求められたらスマホで承認してください。以降は Microsoft のセッションが残るので承認なしで自動ログインされます（切れたら再度 `--login`）。
+- Windows 10 / 11
+- [Python 3.10 以上](https://www.python.org/downloads/)（インストール時に **Add python.exe to PATH** にチェック）
+- [Git](https://git-scm.com/)
 
-## 使い方
+## セットアップ
 
-| やりたいこと | コマンド |
+PowerShell を開いて、順番に実行します。
+
+### 1. ダウンロードして準備する
+
+```powershell
+git clone <このリポジトリのURL>
+cd <クローンしたフォルダ>
+pip install -r requirements.txt
+playwright install chromium
+```
+
+### 2. ID とパスワードを登録する
+
+```powershell
+python -m src.main --init
+```
+
+聞かれたら次を入力します。
+
+- **ID**: メールアドレスの `@` より前の部分（例: `d123456a`）。`@yokohama-cu.ac.jp` は自動で補われます。
+- **パスワード**: YCU のパスワード（入力は画面に表示されません）。
+
+`id_password.txt` が作られます。手で作る場合は、次の4行で書きます。
+
+```text
+id
+d123456a
+password
+あなたのパスワード
+```
+
+このファイルは `.gitignore` に入っているので commit されません。**他人に見せたり、共有したりしないでください。**
+
+### 3. ログインする（初回だけ）
+
+```powershell
+python -m src.main --login
+```
+
+ブラウザが開いて、自動でサインインします。Microsoft Authenticator の承認を求められたら、画面の番号をスマホのアプリに入力してください。サインイン状態は保存され、次回からは承認なしで自動ログインされます。
+
+### 4. 動作を確認する
+
+```powershell
+python -m src.main --list-courses    # 履修講義が表示されればOK
+python -m src.main --once            # 今すぐ1回チェック（ダウンロードはしない）
+```
+
+`--once` を実行すると、結果のメールが自分のアドレスに届きます。初回は各講義の資料を記録するだけで、「新規」とは扱われません。
+
+### 5. 自動で動かす
+
+```powershell
+python -m src.main --on              # 定期チェックと自動ダウンロードを有効にする
+python -m src.main --install-task    # Windows にログインしたら自動で常駐するように登録する
+```
+
+これで、設定した時刻（初期は 11:00 と 17:00）に自動でチェックされます。次回の Windows ログオンから常駐します。**今すぐ始めたい場合は**、次を実行してください。
+
+```powershell
+Start-ScheduledTask -TaskName YCUBoardWatcher
+```
+
+PC の電源が入っていてログオンしている間だけ動きます。スリープ中は動きません。
+
+## 設定を変える
+
+```powershell
+python -m src.main --status                                  # 現在の設定を見る
+python -m src.main --set-times 9:00 13:00 21:00              # チェックする時刻（回数も自由）
+python -m src.main --set-courses 機械学習 統計モデリング1      # 資料を保存する講義を絞る（部分一致）
+python -m src.main --set-courses                             # 絞り込みを解除して全講義にする
+python -m src.main --set-output D:\講義資料                   # 保存先フォルダ（初期は output/）
+python -m src.main --download-off                            # 資料の保存だけ止める（チェックは続ける）
+python -m src.main --mail-off                                # メールを止める
+python -m src.main --off                                     # チェックと保存をまとめて止める
+```
+
+**資料を保存する講義を絞らないと、全講義の資料が保存されます。** 履修講義が多い場合は `--set-courses` で絞るのがおすすめです。
+
+## 困ったとき
+
+| 症状 | 対処 |
 |---|---|
-| 今すぐ1回チェックする | `python -m src.main --once` |
-| 今すぐチェック＋対象講義の資料を保存 | `python -m src.main --once --with-download` |
-| 講義を指定して実行 | `python -m src.main --once --with-download --course 統計モデリング1` |
-| メールを送らず試す | `... --no-mail` |
-| 設定時刻に自動実行（常駐） | `python -m src.main --watch` |
-| 履修講義の一覧 | `python -m src.main --list-courses` |
-| 現在の設定 | `python -m src.main --status` |
+| 「ログインできませんでした」と出る | `python -m src.main --login` をもう一度実行する |
+| 履修講義が表示されない | `--login` でログインし直す。時間割に講義が登録されているかも確認する |
+| 自動実行されていない | `logs/ycuboard.log` を確認する。`--status` で「定期チェック」が ON か確認する |
+| 自動起動をやめたい | `python -m src.main --uninstall-task` |
+| 毎週火曜の深夜に動かない | YCU-Board のメンテナンス時間（火曜 1:00〜6:00）のため、チェックしません |
 
-`--once` は ON/OFF 設定に関係なく実行されます。`--watch` は設定を毎回読み直すので、常駐中に ON/OFF や時刻を変えても反映されます。
+## AI エージェントに任せる場合
 
-### ON / OFF（初期値: チェック OFF・ダウンロード OFF・メール ON）
+Claude Code などのエージェントに「`.agents/setup-guide.md` を読んで、私のセットアップを手伝って」と頼むこともできます。パスワードの入力など、本人が行う手順はエージェントが案内します。
 
-```
-python -m src.main --check-on / --check-off       # 定期チェック
-python -m src.main --download-on / --download-off # 更新資料の自動ダウンロード
-python -m src.main --mail-on / --mail-off         # 結果メール
-python -m src.main --on / --off                   # チェックとダウンロードをまとめて
-```
-ダウンロードはチェック結果の差分を見て動くため、定期実行では「チェック ON」が前提です。
-
-### 巡回時刻・対象講義・保存先
-
-```
-python -m src.main --set-times 11:00 17:00 21:30   # 時刻と回数を自由に設定（初期: 11:00, 17:00）
-python -m src.main --set-courses 統計モデリング1 機械学習   # ダウンロード対象（部分一致。指定なしで全講義）
-python -m src.main --set-output D:\講義資料          # 保存先（初期: output/）
-python -m src.main --set-mail-to someone@example.com # メール宛先（初期: id_password.txt のアドレス）
-```
-講義名は「統計モデリングI」のようにローマ数字でも `1` でも一致します。設定は `config.json` に保存され、直接編集もできます。
-
-## 動作
-
-1. 時間割から履修講義を取得し、各講義の「教材」欄のファイル一覧（資料タイトル・ファイル名・登録日・ID）を読み取る。
-2. 前回の記録（`data/history.db`）と比較して差分を判定する。
-   - **新規**: 新しいファイルが追加された
-   - **更新/差し替え**: 登録日やファイル名が変わった、または同じ資料でファイルが差し替えられた
-   - **削除**: サイトから消えた（ローカルのファイルは残す）
-   - 講義を初めて見たときは「初回登録」として記録だけ行い、差分通知はしません。
-3. 対象講義で未保存・更新された資料を `<保存先>/<講義名>/<資料タイトル>/` に保存。更新時は旧版を `_旧版日時` を付けて残します。
-4. 結果（差分・保存したファイル・エラー）をメールで送信。Windows のトースト通知も出ます。
-
-毎週火曜 1:00〜6:00 はサイトのメンテナンスのため巡回しません。PC が起動していない時刻の巡回は、起動後 2 時間以内なら実行されます。
-
-## メール送信について
-
-学内の Microsoft 365 アカウントは SMTP の基本認証が使えないため、既定ではログイン済みブラウザで Outlook on the web を開いて送信します（追加設定不要）。アプリパスワード等を使う場合は `config.json` の `email.method` を `smtp` にし、`smtp_password.txt` にパスワードを書いてください。
-
-## 構成
-
-`src/main.py`（CLI・スケジューラ）/ `pipeline.py`（1サイクル）/ `auth.py`（自動ログイン）/ `crawler.py`（画面の読み取り）/ `diff_engine.py`（差分判定）/ `downloader.py`（保存先）/ `mailer.py`（メール）/ `notifier.py`（トースト）/ `config.py`（設定）
-
-現在の対象は「教材」のみです。テストと課題（提出物）は未対応です。
+詳しい仕様・コマンド・構成は [`.agents/`](.agents/) にあります。

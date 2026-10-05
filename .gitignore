@@ -1,5 +1,6 @@
 id_password.txt
 smtp_password.txt
+config.json
 output/
 data/
 logs/
