@@ -21,6 +21,7 @@
 | `--doctor` | OS / Python / Playwright / 認証情報 / ログイン履歴 / 自動起動の有無を診断（秘密の値は出さない） |
 | `--check-login` | 保存済みセッションだけで自動ログインできるか（ブラウザ非表示・人の操作なし） |
 | `--login` | ブラウザを表示してログイン（初回・セッション切れ。Authenticator の承認は本人が行う） |
+| `--check-teams` | Teams（SharePoint）に入れるか、履修講義のチームが見つかるか（承認が要るときは `--headful`） |
 | `--test-mail` | 自分宛にテストメールを1通送る（ログイン済みが前提） |
 | `--list-courses` | 履修講義の一覧 |
 | `--status` | 現在の設定 |

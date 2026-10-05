@@ -8,6 +8,7 @@
 | ID・パスワードを対話入力して `id_password.txt` を作る | `--init` |
 | 環境の診断（OS・Python・Playwright・認証情報・ログイン履歴・自動起動。秘密は出さない） | `--doctor` |
 | 保存済みセッションで自動ログインできるか確認 | `--check-login` |
+| Teams（SharePoint）に入れるか・履修講義のチームが見つかるか確認 | `--check-teams`（承認が要るときは `--headful` を付ける） |
 | 自分宛にテストメールを送る（ログイン済みが前提） | `--test-mail` |
 | ログイン（初回・セッション切れ。ブラウザを表示） | `--login` |
 | 初回監査（予行: 保存される資料の一覧だけ表示） | `--initial-sync --dry-run` |
