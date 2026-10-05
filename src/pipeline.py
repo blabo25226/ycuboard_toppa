@@ -75,7 +75,13 @@ def run_cycle(
 
     cfg = load_config()
     if send_mail and cfg["email_enabled"]:
-        send_report(summary, context)
+        notable = bool(summary["downloads"] or summary["errors"]) or any(
+            c["changes"].changed or c["changes"].baseline for c in summary["courses"]
+        )
+        if notable or not cfg["email_only_on_change"]:
+            send_report(summary, context)
+        else:
+            logger.info("更新・エラーが無いためメールは送りません（email_only_on_change）")
     return summary
 
 

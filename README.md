@@ -79,6 +79,10 @@ Start-ScheduledTask -TaskName YCUBoardWatcher
 
 PC の電源が入っていてログオンしている間だけ動きます。スリープ中は動きません。
 
+## AI に手伝ってもらう（おすすめ）
+
+Claude Code などの AI エージェントでこのフォルダを開き、**`/set_env`** と入力すると、AI があなたのPCを確認しながら、Python・ID・ログイン・メール・履修講義の確認までを一緒に進めます。そのまま **`/settings`** で、定期チェックの時刻や、自動で保存する講義、メールの設定も対話で決められます。
+
 ## 設定を変える
 
 ```powershell
@@ -89,6 +93,7 @@ python -m src.main --set-courses                             # 絞り込みを�
 python -m src.main --set-output D:\講義資料                   # 保存先フォルダ（初期は output/）
 python -m src.main --download-off                            # 資料の保存だけ止める（チェックは続ける）
 python -m src.main --mail-off                                # メールを止める
+python -m src.main --mail-changes-only                       # 更新があったときだけメールする
 python -m src.main --off                                     # チェックと保存をまとめて止める
 ```
 
@@ -106,6 +111,6 @@ python -m src.main --off                                     # チェックと�
 
 ## AI エージェントに任せる場合
 
-Claude Code などのエージェントに「`.agents/setup-guide.md` を読んで、私のセットアップを手伝って」と頼むこともできます。パスワードの入力など、本人が行う手順はエージェントが案内します。
+スキル非対応のエージェントには、「`.agents/setup-guide.md` を読んで、私のセットアップを手伝って」と頼んでください。パスワードの入力など、本人が行う手順はエージェントが案内します。
 
 詳しい仕様・コマンド・構成は [`.agents/`](.agents/) にあります。

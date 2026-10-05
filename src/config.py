@@ -14,6 +14,7 @@ DEFAULT_CONFIG: dict = {
     "check_enabled": False,  # 2. 定期チェック
     "download_enabled": False,  # 3. 更新があった資料の自動ダウンロード
     "email_enabled": True,  # 4. 結果メール
+    "email_only_on_change": False,  # True なら、更新・保存・エラーがあったときだけ送る
     # 1日の巡回時刻（HH:MM）。回数も時刻も自由に増減できる。
     "daily_run_times": ["11:00", "17:00"],
     # ダウンロード対象の講義名（部分一致）。空なら全講義。

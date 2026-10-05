@@ -76,6 +76,42 @@ def do_login() -> None:
     print("ログインに成功しました。以降は自動でログインされます。")
 
 
+def do_check_login() -> int:
+    """保存済みセッションだけで（ブラウザ非表示・人の操作なしで）ログインできるかを確認する。"""
+    from src.auth import ensure_logged_in
+
+    with sync_playwright() as p:
+        context = open_context(p, headless=True)
+        try:
+            page = context.pages[0] if context.pages else context.new_page()
+            ok = ensure_logged_in(page, timeout_seconds=60)
+        finally:
+            context.close()
+    if ok:
+        print("ログイン確認: OK（ブラウザを起動し直しても自動でログインできました）")
+        return 0
+    print("ログイン確認: NG（承認が必要か、ID/パスワードが違う可能性があります → python -m src.main --login）")
+    return 1
+
+
+def do_test_mail() -> int:
+    """自分宛にテストメールを1通送る。"""
+    from src.mailer import send_email
+
+    with sync_playwright() as p:
+        context = open_context(p, headless=True)
+        try:
+            ok = send_email(
+                "[YCU-Board] テストメール",
+                f"YCU-Board 資料チェッカーのテストメールです。({datetime.now():%Y-%m-%d %H:%M})\nこのメールが届いていれば、結果メールも届きます。",
+                context,
+            )
+        finally:
+            context.close()
+    print("テストメール送信: " + ("OK（受信箱を確認してください）" if ok else "NG（logs やエラー表示を確認してください）"))
+    return 0 if ok else 1
+
+
 def do_list_courses(headless: bool) -> None:
     from src.auth import ensure_logged_in
 
@@ -151,7 +187,8 @@ def print_status() -> None:
     print("\n=== YCU-Board 自動チェック 設定 ===")
     print(f"  定期チェック      : {onoff(cfg['check_enabled'])}   (--check-on / --check-off)")
     print(f"  自動ダウンロード  : {onoff(cfg['download_enabled'])}   (--download-on / --download-off)")
-    print(f"  結果メール        : {onoff(cfg['email_enabled'])}   (--mail-on / --mail-off)  宛先: {mail}")
+    when = "更新があったときだけ" if cfg["email_only_on_change"] else "毎回"
+    print(f"  結果メール        : {onoff(cfg['email_enabled'])}   (--mail-on / --mail-off)  宛先: {mail} / {when} (--mail-changes-only / --mail-always)")
     print(f"  巡回時刻          : {', '.join(cfg['daily_run_times'])}  (1日{len(cfg['daily_run_times'])}回, --set-times)")
     print(f"  ダウンロード対象  : {targets}  (--set-courses)")
     print(f"  保存先            : {cfg['output_dir']}  (--set-output)\n")
@@ -195,6 +232,9 @@ def build_parser() -> argparse.ArgumentParser:
     setup.add_argument("--init", action="store_true", help="ID とパスワードを入力して id_password.txt を作成")
     setup.add_argument("--install-task", action="store_true", help="Windows ログオン時に --watch を自動起動する登録")
     setup.add_argument("--uninstall-task", action="store_true", help="自動起動の登録を解除")
+    setup.add_argument("--doctor", action="store_true", help="環境（Python・Playwright・認証情報など）を診断")
+    setup.add_argument("--check-login", action="store_true", help="保存済みセッションで自動ログインできるか確認")
+    setup.add_argument("--test-mail", action="store_true", help="自分宛にテストメールを送信")
 
     run = p.add_argument_group("実行")
     run.add_argument("--login", action="store_true", help="ブラウザを表示してログイン（初回・セッション切れ時）")
@@ -214,6 +254,8 @@ def build_parser() -> argparse.ArgumentParser:
     sw.add_argument("--download-off", action="store_true")
     sw.add_argument("--mail-on", action="store_true")
     sw.add_argument("--mail-off", action="store_true")
+    sw.add_argument("--mail-changes-only", action="store_true", help="更新・保存・エラーがあったときだけメールする")
+    sw.add_argument("--mail-always", action="store_true", help="毎回メールする（初期値）")
     sw.add_argument("--on", action="store_true", help="チェックとダウンロードをまとめてON")
     sw.add_argument("--off", action="store_true", help="チェックとダウンロードをまとめてOFF")
 
@@ -240,6 +282,10 @@ def apply_settings(args) -> bool:
         changes["email_enabled"] = True
     if args.mail_off:
         changes["email_enabled"] = False
+    if args.mail_changes_only:
+        changes["email_only_on_change"] = True
+    if args.mail_always:
+        changes["email_only_on_change"] = False
     if args.set_courses is not None:
         changes["target_courses"] = args.set_courses
     if args.set_output:
@@ -268,7 +314,15 @@ def main() -> None:
             print("※ 保存先の変更は次回起動から有効です。")
 
     headless = not args.headful
-    if args.init:
+    if args.doctor:
+        from src.doctor import run_doctor
+
+        sys.exit(run_doctor())
+    elif args.check_login:
+        sys.exit(do_check_login())
+    elif args.test_mail:
+        sys.exit(do_test_mail())
+    elif args.init:
         do_init()
     elif args.install_task:
         install_task()
@@ -296,6 +350,6 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
-    except (FileNotFoundError, ValueError) as e:  # 認証情報ファイルの不備など、利用者が直せるもの
+    except (FileNotFoundError, ValueError, TimeoutError) as e:  # 認証情報ファイルの不備など、利用者が直せるもの
         print(f"[エラー] {e}")
         sys.exit(1)

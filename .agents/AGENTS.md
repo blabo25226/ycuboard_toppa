@@ -3,7 +3,7 @@
 YCU-Board（横浜市立大学 LMS）の講義資料を定期チェックし、更新があれば自動ダウンロードしてメールで報告するツール。学内の誰でも `git clone` して自分のアカウントで使う前提。Python 3.10+ / Playwright / Windows。
 
 ## 読む順番
-- 利用者のセットアップを手伝う → [setup-guide.md](setup-guide.md)
+- 利用者のセットアップ・設定を手伝う → [setup-guide.md](setup-guide.md)。スキル `/set_env`（環境設定）と `/settings`（利用設定）が本体: [skills/set_env/SKILL.md](skills/set_env/SKILL.md)、[skills/settings/SKILL.md](skills/settings/SKILL.md)
 - コマンド・設定・動作の仕様 → [usage.md](usage.md)
 - 実装を直す・拡張する → [architecture.md](architecture.md)
 
