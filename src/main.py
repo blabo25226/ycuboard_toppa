@@ -18,6 +18,7 @@ from src.config import (
     AUTH_PROFILE_DIR,
     BASE_DIR,
     ID_PASSWORD_PATH,
+    OUTPUT_DIR,
     load_config,
     normalize_time,
     set_daily_run_times,
@@ -25,6 +26,7 @@ from src.config import (
     write_credentials,
 )
 from src.crawler import YCUBoardCrawler
+from src.downloader import MAX_DIR_NAME_LENGTH, sanitize_filename
 from src.pipeline import run_cycle
 from src.schedule import in_maintenance, last_due_slot, missed_slot, planned_for
 from src.state import load_state, update_state
@@ -107,10 +109,15 @@ def do_initial_sync(*, headless: bool, targets, dry_run: bool, send_mail: bool) 
         if not by_course:
             print("  保存する資料はありません（対象講義に公開済みの資料が無い、または保存済み）。")
         for name, items in by_course.items():
-            print(f"  ■ {name}: {len(items)} 件" + ("" if dry_run else f" → {Path(items[0]['path']).parent.parent}"))
+            print(f"  ■ {name}: {len(items)} 件" + ("" if dry_run else f" → {OUTPUT_DIR / sanitize_filename(name, MAX_DIR_NAME_LENGTH)}"))
             for r in items:
                 print(f"      ・{r['material_title']} / {r['file_name']}")
         print(f"\n{'保存される' if dry_run else '保存した'}資料: {len(rows)} 件")
+        skipped = summary.get("teams_skipped", [])
+        if skipped:
+            print(f"大きいため保存しない Teams のファイル: {len(skipped)} 件（必要なら Teams から直接開いてください）")
+            for r in skipped:
+                print(f"      ・{r['course_name']} / {r['rel_path']}（{r['size'] / 1e6:.0f} MB）")
     for err in summary["errors"]:
         print(f"  [エラー] {err}")
 
@@ -152,6 +159,37 @@ def do_check_login() -> int:
         return 0
     print("ログイン確認: NG（承認が必要か、ID/パスワードが違う可能性があります → python -m src.main --login）")
     return 1
+
+
+def do_check_teams(headless: bool) -> int:
+    """保存済みセッションで Teams（SharePoint）に入れるか、履修講義のチームが見つかるかを確認する。"""
+    from src.auth import ensure_logged_in
+    from src.teams import find_team_sites, open_sharepoint
+
+    with sync_playwright() as p:
+        context = open_context(p, headless)
+        try:
+            page = context.pages[0] if context.pages else context.new_page()
+            if not ensure_logged_in(page, timeout_seconds=60):
+                print("Teams 確認: NG（先に YCU-Board にログインできません → python -m src.main --login）")
+                return 1
+            courses = YCUBoardCrawler(page).get_enrolled_courses()
+            if not open_sharepoint(page):
+                print("Teams 確認: NG（SharePoint にログインできません。承認が必要かもしれません → python -m src.main --check-teams --headful）")
+                return 1
+            sites = find_team_sites(page, courses, load_state().get("teams_sites", {}))
+        finally:
+            context.close()
+    if sites:
+        print("Teams 確認: OK（Teams のサイトに入れました）")
+    else:
+        print("Teams 確認: NG（Teams のサイトには入れましたが、履修講義に対応するチームが1つも見つかりません）")
+    for c in courses:
+        info = sites.get(c["id"])
+        print(f"  {c['name']}: " + (f"チーム「{info['team']}」" if info else "チームなし（Teams の対象外）"))
+    if not sites:
+        print("  チーム名に講義名がそのまま含まれていないと対応づけられません（部分一致・昨年度のチームは使いません）。")
+    return 0 if sites else 1
 
 
 def do_test_mail() -> int:
@@ -262,6 +300,7 @@ def print_status() -> None:
     print("\n=== YCU-Board 自動チェック 設定 ===")
     print(f"  定期チェック      : {onoff(cfg['check_enabled'])}   (--check-on / --check-off)")
     print(f"  自動ダウンロード  : {onoff(cfg['download_enabled'])}   (--download-on / --download-off)")
+    print(f"  Teams の資料      : {onoff(cfg['teams_enabled'])}   (--teams-on / --teams-off)  ダウンロードは「自動ダウンロード」と対象講義に従う")
     when = "更新があったときだけ" if cfg["email_only_on_change"] else "毎回"
     print(f"  結果メール        : {onoff(cfg['email_enabled'])}   (--mail-on / --mail-off)  宛先: {mail} / {when} (--mail-changes-only / --mail-always)")
     print(f"  巡回時刻          : {', '.join(cfg['daily_run_times'])}  (1日{len(cfg['daily_run_times'])}回, --set-times)")
@@ -285,6 +324,8 @@ def print_status() -> None:
         print("  初回監査          : 未実施  ← 定期チェックの前に --initial-sync で既存の資料を取得してください")
     if state.get("login_alert_sent"):
         print("  ※ ログイン失敗をお知らせ済みです。python -m src.main --login で復旧してください。")
+    if cfg["teams_enabled"] and state.get("teams_login_failed"):
+        print("  ※ 前回 Teams にログインできませんでした。python -m src.main --check-teams --headful で承認してください。")
     print()
 
 
@@ -356,6 +397,7 @@ def build_parser() -> argparse.ArgumentParser:
     setup.add_argument("--uninstall-task", action="store_true", help="自動起動の登録を解除")
     setup.add_argument("--doctor", action="store_true", help="環境（Python・Playwright・認証情報など）を診断")
     setup.add_argument("--check-login", action="store_true", help="保存済みセッションで自動ログインできるか確認")
+    setup.add_argument("--check-teams", action="store_true", help="Teams（SharePoint）に入れるか、履修講義のチームが見つかるか確認")
     setup.add_argument("--test-mail", action="store_true", help="自分宛にテストメールを送信")
 
     run = p.add_argument_group("実行")
@@ -380,6 +422,8 @@ def build_parser() -> argparse.ArgumentParser:
     sw.add_argument("--check-off", action="store_true")
     sw.add_argument("--download-on", action="store_true")
     sw.add_argument("--download-off", action="store_true")
+    sw.add_argument("--teams-on", action="store_true", help="Teams（SharePoint）の講義資料も確認・ダウンロードする")
+    sw.add_argument("--teams-off", action="store_true", help="Teams の確認をやめる")
     sw.add_argument("--mail-on", action="store_true")
     sw.add_argument("--mail-off", action="store_true")
     sw.add_argument("--mail-changes-only", action="store_true", help="更新・保存・エラーがあったときだけメールする")
@@ -408,6 +452,10 @@ def apply_settings(args) -> bool:
         changes["download_enabled"] = True
     if args.off or args.download_off:
         changes["download_enabled"] = False
+    if args.teams_on:
+        changes["teams_enabled"] = True
+    if args.teams_off:
+        changes["teams_enabled"] = False
     if args.mail_on:
         changes["email_enabled"] = True
     if args.mail_off:
@@ -454,6 +502,8 @@ def main() -> None:
         sys.exit(run_doctor())
     elif args.check_login:
         sys.exit(do_check_login())
+    elif args.check_teams:
+        sys.exit(do_check_teams(headless))
     elif args.test_mail:
         sys.exit(do_test_mail())
     elif args.init:

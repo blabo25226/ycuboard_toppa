@@ -2,6 +2,7 @@
 
 YCU-Board（横浜市立大学 LMS）に自動でログインし、履修している講義の「教材」を決まった時刻にチェックします。更新があれば資料を自動で保存し、結果を自分のメールに送ります。
 
+- **Teams の講義資料**（チャンネル「一般」の「共有済み」にあるファイル）も、任意でチェック・保存できます（`--teams-on`）。会議の録画（`Recordings`）は大きいので保存しません。
 - **テストと課題（提出物）**は、保存も提出もしませんが、追加・更新・削除があるとメールで知らせます（例: 「統計モデリングIでテスト:第3回…が追加されました」）。
 - 対象は **自分のアカウントの履修講義だけ**です。履修講義は時間割から自動で取得するので、講義ごとの設定は要りません。
 - 認証情報（ID・パスワード）は **自分のPCの中だけ**に保存されます。外部には送りません。
@@ -115,6 +116,7 @@ python -m src.main --jitter-off                              # 時刻の誤差�
 python -m src.main --set-courses 機械学習 統計モデリング1      # 資料を保存する講義を絞る（部分一致）
 python -m src.main --set-courses                             # 絞り込みを解除して全講義にする
 python -m src.main --set-output D:\講義資料                   # 保存先フォルダ（初期は output/）
+python -m src.main --teams-on                                # Teams の講義資料も確認・保存する（--teams-off で止める）
 python -m src.main --download-off                            # 資料の保存だけ止める（チェックは続ける）
 python -m src.main --mail-off                                # メールを止める
 python -m src.main --mail-changes-only                       # 更新があったときだけメールする

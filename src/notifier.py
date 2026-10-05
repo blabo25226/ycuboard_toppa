@@ -43,3 +43,8 @@ def notify_run_failed(reason: str) -> None:
 def notify_login_required() -> None:
     print("\n[要対応] Authenticator アプリで承認番号を入力してください。\n")
     show_windows_toast("【YCU-Board】再サインインが必要です", "Authenticatorアプリで承認番号を入力してください。")
+
+
+def notify_teams_login_failed() -> None:
+    show_windows_toast("【YCU-Board】Teams にログインできません",
+                       "Teams の講義資料を確認できませんでした。python -m src.main --check-teams --headful で承認してください。")

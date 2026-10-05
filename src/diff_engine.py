@@ -62,6 +62,27 @@ CREATE TABLE IF NOT EXISTS coursework (
 """
 
 
+# Teams（SharePoint）のファイル。キーは SharePoint のファイルID(UniqueId)。
+TEAMS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS teams_files (
+    course_id TEXT NOT NULL,
+    file_id TEXT NOT NULL,
+    course_name TEXT NOT NULL,
+    rel_path TEXT NOT NULL,             -- General からの相対パス（"/" 区切り）
+    modified TEXT,                      -- サイト上の更新日時
+    size INTEGER,
+    first_seen TEXT DEFAULT CURRENT_TIMESTAMP,
+    last_seen TEXT DEFAULT CURRENT_TIMESTAMP,
+    removed INTEGER DEFAULT 0,
+    local_path TEXT,
+    file_hash TEXT,
+    downloaded_modified TEXT,           -- ダウンロード時点の更新日時
+    downloaded_at TEXT,
+    PRIMARY KEY (course_id, file_id)
+)
+"""
+
+
 @dataclass
 class Changes:
     """1講義ぶんの差分。new/updated の要素は資料 dict に "reason" を足したもの。"""
@@ -93,6 +114,7 @@ def init_db() -> None:
         conn.execute(SCHEMA)
         conn.execute(SCANS_SCHEMA)
         conn.execute(COURSEWORK_SCHEMA)
+        conn.execute(TEAMS_SCHEMA)
 
 
 def _scanned(conn, course_id: str, kind: str) -> bool:
@@ -312,3 +334,112 @@ def has_active_coursework(course_id: str, kind: str) -> bool:
             "SELECT 1 FROM coursework WHERE course_id = ? AND kind = ? AND removed = 0 LIMIT 1", (course_id, kind)
         ).fetchone()
     return row is not None
+
+
+# ---------- Teams のファイル ----------
+def apply_teams_scan(course_id: str, course_name: str, items: List[dict]) -> Changes:
+    """今回取得した Teams のファイル一覧を前回と比較して差分を返し、記録を更新する（更新判定は更新日時とサイズ）。"""
+    init_db()
+    changes = Changes()
+    with get_connection() as conn:
+        any_row = conn.execute("SELECT 1 FROM teams_files WHERE course_id = ? LIMIT 1", (course_id,)).fetchone()
+        changes.baseline = any_row is None and not _scanned(conn, course_id, "teams")
+        stored = {
+            r["file_id"]: r
+            for r in conn.execute("SELECT * FROM teams_files WHERE course_id = ? AND removed = 0", (course_id,))
+        }
+        current_ids = {it["file_id"] for it in items}
+
+        for it in items:
+            prev = stored.get(it["file_id"])
+            moved = False
+            if prev is None:
+                if not changes.baseline:
+                    changes.new.append({**it, "reason": NEW})
+            elif (prev["modified"], prev["size"]) != (it["modified"], it["size"]):
+                changes.updated.append({**it, "reason": "更新", "previous_rel_path": prev["rel_path"]})
+            elif prev["rel_path"] != it["rel_path"]:
+                # 名前変更・移動（中身は同じ）。新しい名前・場所に保存し直すため、ダウンロード済みの記録を外す
+                moved = True
+                changes.updated.append({**it, "reason": "名前変更・移動", "previous_rel_path": prev["rel_path"]})
+            conn.execute(
+                """
+                INSERT INTO teams_files (course_id, file_id, course_name, rel_path, modified, size)
+                VALUES (:course_id, :file_id, :course_name, :rel_path, :modified, :size)
+                ON CONFLICT(course_id, file_id) DO UPDATE SET
+                    course_name = excluded.course_name, rel_path = excluded.rel_path,
+                    modified = excluded.modified, size = excluded.size,
+                    last_seen = CURRENT_TIMESTAMP, removed = 0
+                """,
+                {**it, "course_id": course_id, "course_name": course_name},
+            )
+            if moved:
+                conn.execute(
+                    "UPDATE teams_files SET downloaded_modified = NULL WHERE course_id = ? AND file_id = ?",
+                    (course_id, it["file_id"]),
+                )
+
+        for file_id, r in stored.items():
+            if file_id not in current_ids:
+                changes.removed.append(dict(r))
+                conn.execute(
+                    "UPDATE teams_files SET removed = 1 WHERE course_id = ? AND file_id = ?", (course_id, file_id)
+                )
+        _mark_scanned(conn, course_id, "teams")
+    return changes
+
+
+def has_active_teams_files(course_id: str) -> bool:
+    init_db()
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM teams_files WHERE course_id = ? AND removed = 0 LIMIT 1", (course_id,)
+        ).fetchone()
+    return row is not None
+
+
+def has_teams_records(course_id: str) -> bool:
+    """その講義の Teams のファイルを一度でも記録したか（削除済みを含む）。"""
+    init_db()
+    with get_connection() as conn:
+        row = conn.execute("SELECT 1 FROM teams_files WHERE course_id = ? LIMIT 1", (course_id,)).fetchone()
+    return row is not None
+
+
+def reset_teams_course(course_id: str) -> None:
+    """講義に対応するチームが変わったとき、その講義の Teams の記録を消す（次の確認は初回登録になる）。ローカルのファイルは消さない。"""
+    init_db()
+    with get_connection() as conn:
+        conn.execute("DELETE FROM teams_files WHERE course_id = ?", (course_id,))
+        conn.execute("DELETE FROM scans WHERE course_id = ? AND kind = 'teams'", (course_id,))
+
+
+def pending_teams_downloads(course_id: str) -> List[dict]:
+    """未ダウンロード、ローカルファイル消失、またはダウンロード後にサイト側が更新された Teams のファイル。"""
+    init_db()
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM teams_files WHERE course_id = ? AND removed = 0 ORDER BY rel_path", (course_id,)
+        ).fetchall()
+    pending = []
+    for r in rows:
+        if not r["local_path"] or not Path(r["local_path"]).exists():
+            reason = NEW if not r["downloaded_at"] else "ローカルファイル消失"
+        elif r["downloaded_modified"] != (r["modified"] or ""):
+            reason = UPDATED
+        else:
+            continue
+        pending.append({**dict(r), "reason": reason})
+    return pending
+
+
+def record_teams_download(course_id: str, file_id: str, local_path: str, file_hash: str, modified: str) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE teams_files SET local_path = ?, file_hash = ?, downloaded_modified = ?,
+                                   downloaded_at = CURRENT_TIMESTAMP
+            WHERE course_id = ? AND file_id = ?
+            """,
+            (local_path, file_hash, modified or "", course_id, file_id),
+        )

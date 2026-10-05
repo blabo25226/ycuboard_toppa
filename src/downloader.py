@@ -49,5 +49,9 @@ def archive_old_version(path: Path) -> Path:
     """更新前の旧版を `<名前>_旧版YYYYMMDD-HHMMSS.<拡張子>` に退避して返す。"""
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     archived = path.with_name(f"{path.stem}_旧版{stamp}{path.suffix}")
+    counter = 1
+    while archived.exists():  # 同じ秒に2回退避したとき
+        archived = path.with_name(f"{path.stem}_旧版{stamp}_{counter}{path.suffix}")
+        counter += 1
     path.rename(archived)
     return archived
