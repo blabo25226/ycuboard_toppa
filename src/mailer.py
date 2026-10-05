@@ -54,7 +54,7 @@ def build_report(summary: dict) -> tuple:
     if errors:
         lines += ["", "【エラー】"] + [f"  {e}" for e in errors]
 
-    flag = "更新あり" if (n_new or n_upd or downloads) else "更新なし"
+    flag = "初回監査完了" if summary.get("initial") else ("更新あり" if (n_new or n_upd or downloads) else "更新なし")
     if errors:
         flag += "・エラーあり"
     return f"[YCU-Board] {flag} ({summary['started']:%m/%d %H:%M})", "\n".join(lines)

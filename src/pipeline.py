@@ -24,6 +24,8 @@ def run_cycle(
     targets: Optional[List[str]] = None,
     send_mail: bool = True,
     scheduled: bool = False,
+    initial: bool = False,
+    dry_run: bool = False,
 ) -> Optional[dict]:
     """
     context   : ログイン用プロファイルで起動済みのブラウザ
@@ -31,6 +33,8 @@ def run_cycle(
     targets   : ダウンロード対象の講義名(部分一致)。None なら config の target_courses、空なら全講義
     send_mail : True なら結果をメール送信する（config の email_enabled も別途必要）
     scheduled : True（定期実行）なら、ログインできなかったときに本人へ通知する
+    initial   : True なら初回監査（既存資料の取得）。結果メールの件名が変わる
+    dry_run   : True ならダウンロードせず、保存対象を summary["pending"] に集めるだけ（メールも送らない）
     ログインできなかった場合は None を返す。
     """
     cfg = load_config()
@@ -62,6 +66,8 @@ def run_cycle(
         "downloads": [],
         "errors": [],
         "recovered": recovered,
+        "initial": initial,
+        "pending": [],
     }
 
     for course in courses:
@@ -78,12 +84,17 @@ def run_cycle(
             )
 
             if course["id"] in target_ids:
-                _download_pending(crawler, course, summary)
+                if dry_run:
+                    summary["pending"] += pending_downloads(course["id"])
+                else:
+                    _download_pending(crawler, course, summary)
             crawler.sleep()
         except Exception as e:  # noqa: BLE001 - 1講義の失敗で全体を止めない
             logger.exception("講義の巡回に失敗: %s", course["name"])
             summary["errors"].append(f"{course['name']}: {e}")
 
+    if dry_run:
+        return summary
     update_state(
         last_run=now_iso(),
         last_result="ok" if not summary["errors"] else "error",

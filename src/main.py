@@ -56,11 +56,13 @@ def open_context(playwright, headless: bool):
     )
 
 
-def run_once(*, headless: bool, download: bool, targets=None, send_mail: bool = True, scheduled: bool = False):
+def run_once(*, headless: bool, download: bool, targets=None, send_mail: bool = True, scheduled: bool = False,
+             initial: bool = False, dry_run: bool = False):
     with sync_playwright() as p:
         context = open_context(p, headless)
         try:
-            return run_cycle(context, download=download, targets=targets, send_mail=send_mail, scheduled=scheduled)
+            return run_cycle(context, download=download, targets=targets, send_mail=send_mail, scheduled=scheduled,
+                             initial=initial, dry_run=dry_run)
         finally:
             context.close()
 
@@ -74,6 +76,48 @@ def do_login() -> None:
         finally:
             context.close()
     print("ログインに成功しました。以降は自動でログインされます。")
+
+
+def do_initial_sync(*, headless: bool, targets, dry_run: bool, send_mail: bool) -> int:
+    """
+    初回監査: 定期監査を始める前に、すでに公開されている資料を取得し、全講義の現状を「基準」として記録する。
+    保存対象は config の target_courses（--course で上書き可）。ダウンロードが OFF のときは記録だけ行う。
+    --dry-run なら何も保存せず、保存される資料の一覧だけ表示する。
+    """
+    from src.state import now_iso, update_state
+
+    cfg = load_config()
+    download = cfg["download_enabled"] or bool(targets)
+    summary = run_once(headless=headless, download=download, targets=targets, send_mail=send_mail and not dry_run,
+                       initial=True, dry_run=dry_run)
+    if summary is None:
+        return 1
+
+    scope = ", ".join(targets or cfg["target_courses"]) or "(全講義)"
+    print(f"\n=== 初回監査{'（予行: 何も保存していません）' if dry_run else ''} ===")
+    print(f"確認した講義: {len(summary['courses'])} 件 / 資料の合計: {sum(c['count'] for c in summary['courses'])} 件")
+    if not download:
+        print("自動ダウンロードが OFF のため、資料は保存せず、現状の記録だけ行いました。")
+    else:
+        print(f"保存の対象講義: {scope}")
+        rows = summary["pending"] if dry_run else summary["downloads"]
+        by_course = {}
+        for r in rows:
+            by_course.setdefault(r["course_name"], []).append(r)
+        if not by_course:
+            print("  保存する資料はありません（対象講義に公開済みの資料が無い、または保存済み）。")
+        for name, items in by_course.items():
+            print(f"  ■ {name}: {len(items)} 件" + ("" if dry_run else f" → {Path(items[0]['path']).parent.parent}"))
+            for r in items:
+                print(f"      ・{r['material_title']} / {r['file_name']}")
+        print(f"\n{'保存される' if dry_run else '保存した'}資料: {len(rows)} 件")
+    for err in summary["errors"]:
+        print(f"  [エラー] {err}")
+
+    if not dry_run:
+        update_state(initial_sync_at=now_iso(), initial_sync_scope=scope, initial_sync_files=len(summary["downloads"]))
+        print("\n初回監査が完了しました。これ以降の定期監査では、ここからの『差分』だけを検知します。")
+    return 1 if summary["errors"] else 0
 
 
 def do_check_login() -> int:
@@ -202,6 +246,10 @@ def print_status() -> None:
     print("  --- 状態 ---")
     print(f"  自動起動          : {task_msg}" + ("" if registered else "  ← 登録しないと定期チェックは動きません"))
     print(f"  最終実行          : {state['last_run'].replace('T', ' ')}  {last}" if state.get("last_run") else "  最終実行          : まだ実行されていません")
+    if state.get("initial_sync_at"):
+        print(f"  初回監査          : 完了 {state['initial_sync_at'].replace('T', ' ')}（保存 {state.get('initial_sync_files', 0)} 件）")
+    else:
+        print("  初回監査          : 未実施  ← 定期チェックの前に --initial-sync で既存の資料を取得してください")
     if state.get("login_alert_sent"):
         print("  ※ ログイン失敗をお知らせ済みです。python -m src.main --login で復旧してください。")
     print()
@@ -251,6 +299,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = p.add_argument_group("実行")
     run.add_argument("--login", action="store_true", help="ブラウザを表示してログイン（初回・セッション切れ時）")
+    run.add_argument("--initial-sync", action="store_true", help="初回監査: 定期監査の前に、公開済みの資料を取得し現状を基準として記録")
+    run.add_argument("--dry-run", action="store_true", help="--initial-sync と併用: 保存せず、保存される資料の一覧だけ表示")
     run.add_argument("--once", action="store_true", help="今すぐ1回チェックする（ON/OFF設定に関係なく実行）")
     run.add_argument("--watch", action="store_true", help="設定した時刻に自動チェックする常駐モード")
     run.add_argument("--list-courses", action="store_true", help="履修中の講義を一覧表示")
@@ -345,6 +395,8 @@ def main() -> None:
         do_login()
     elif args.list_courses:
         do_list_courses(headless)
+    elif args.initial_sync:
+        sys.exit(do_initial_sync(headless=headless, targets=args.course, dry_run=args.dry_run, send_mail=not args.no_mail))
     elif args.once:
         download = args.with_download or load_config()["download_enabled"]
         summary = run_once(headless=headless, download=download, targets=args.course, send_mail=not args.no_mail)
