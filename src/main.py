@@ -120,6 +120,22 @@ def do_initial_sync(*, headless: bool, targets, dry_run: bool, send_mail: bool) 
     return 1 if summary["errors"] else 0
 
 
+def _print_audit_result(summary: dict) -> None:
+    """監査の結果を画面に出す（メールと同じ内容）。"""
+    from src.mailer import build_report
+
+    subject, body = build_report(summary)
+    print("\n" + "=" * 60 + f"\n{subject}\n" + "=" * 60)
+    print(body)
+    mail = {
+        "sent": "結果メールを送信しました。",
+        "failed": "結果メールの送信に失敗しました（ログを確認してください）。",
+        "skipped": "更新・エラーが無いため、メールは送りませんでした（『更新があったときだけ』の設定）。",
+        "off": "メールは送っていません（メールが OFF、または --no-mail）。",
+    }.get(summary.get("mail"), "")
+    print(f"\n完了: 講義 {len(summary['courses'])} 件をチェック / ダウンロード {len(summary['downloads'])} 件。{mail}")
+
+
 def do_check_login() -> int:
     """保存済みセッションだけで（ブラウザ非表示・人の操作なしで）ログインできるかを確認する。"""
     from src.auth import ensure_logged_in
@@ -346,7 +362,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--login", action="store_true", help="ブラウザを表示してログイン（初回・セッション切れ時）")
     run.add_argument("--initial-sync", action="store_true", help="初回監査: 定期監査の前に、公開済みの資料を取得し現状を基準として記録")
     run.add_argument("--dry-run", action="store_true", help="--initial-sync と併用: 保存せず、保存される資料の一覧だけ表示")
-    run.add_argument("--once", action="store_true", help="今すぐ1回チェックする（ON/OFF設定に関係なく実行）")
+    run.add_argument("--now", "--once", dest="once", action="store_true",
+                     help="今すぐ監査する（定期チェックの ON/OFF に関係なく実行。ダウンロード・メールは設定に従う）")
     run.add_argument("--watch", action="store_true", help="設定した時刻に自動チェックする常駐モード")
     run.add_argument("--start", action="store_true", help="停止している常駐（定期監査）を起動する")
     run.add_argument("--stop", action="store_true", help="動いている常駐を停止する")
@@ -464,7 +481,7 @@ def main() -> None:
         summary = run_once(headless=headless, download=download, targets=args.course, send_mail=not args.no_mail)
         if summary is None:
             sys.exit(1)
-        print(f"\n完了: 講義 {len(summary['courses'])} 件をチェック / ダウンロード {len(summary['downloads'])} 件")
+        _print_audit_result(summary)
     elif args.watch:
         enable_file_logging()
         watch(headless)

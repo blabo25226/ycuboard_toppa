@@ -155,9 +155,12 @@ def _run_cycle(context, *, download, targets, send_mail, scheduled, initial, dry
             for c in summary["courses"]
         )
         if notable or not cfg["email_only_on_change"]:
-            send_report(summary, context)
+            summary["mail"] = "sent" if send_report(summary, context) else "failed"
         else:
+            summary["mail"] = "skipped"
             logger.info("更新・エラーが無いためメールは送りません（email_only_on_change）")
+    else:
+        summary["mail"] = "off"
     return summary
 
 
