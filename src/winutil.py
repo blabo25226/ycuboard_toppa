@@ -4,19 +4,20 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from src.config import BASE_DIR
 
 TASK_NAME = "YCUBoardWatcher"
 
 
-def powershell(script: str) -> subprocess.CompletedProcess:
+def powershell(script: str, timeout: Optional[float] = None) -> subprocess.CompletedProcess:
     # 日本語パスが文字化けしないよう UTF-16LE の Base64 で渡す
     script = "$ProgressPreference = 'SilentlyContinue'\n" + script
     encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
     return subprocess.run(
-        ["powershell", "-NoProfile", "-EncodedCommand", encoded], capture_output=True, text=True, errors="replace"
+        ["powershell", "-NoProfile", "-EncodedCommand", encoded], capture_output=True, text=True, errors="replace",
+        timeout=timeout, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
 
 

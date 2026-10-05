@@ -1,33 +1,28 @@
 """Windows のトースト通知（PowerShell 経由）。"""
 import logging
-import subprocess
 
 from src.config import load_config
+from src.winutil import powershell
 
 logger = logging.getLogger(__name__)
 
 
 def show_windows_toast(title: str, message: str) -> None:
-    def esc(text: str) -> str:  # PowerShell のダブルクォート文字列と XML 用にエスケープ
-        return (text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                .replace("`", "``").replace('"', '`"').replace("$", "`$"))
+    def quote(text: str) -> str:  # PowerShell の単一引用符文字列（展開なし）。' は '' で表す
+        return "'" + text.replace("'", "''") + "'"
 
+    # CreateTextNode はテキストをそのまま入れるので XML のエスケープは不要
     ps_script = f"""
     [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
     $template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
     $nodes = $template.GetElementsByTagName("text")
-    $nodes.Item(0).AppendChild($template.CreateTextNode("{esc(title)}")) > $null
-    $nodes.Item(1).AppendChild($template.CreateTextNode("{esc(message)}")) > $null
+    $nodes.Item(0).AppendChild($template.CreateTextNode({quote(title)})) > $null
+    $nodes.Item(1).AppendChild($template.CreateTextNode({quote(message)})) > $null
     $notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("YCU-Board Downloader")
     $notifier.Show([Windows.UI.Notifications.ToastNotification]::new($template))
     """
     try:
-        subprocess.run(
-            ["powershell", "-NoProfile", "-Command", ps_script],
-            capture_output=True,
-            timeout=10,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
+        powershell(ps_script, timeout=10)
     except Exception as e:  # noqa: BLE001 - 通知の失敗は無視してよい
         logger.debug("トースト通知に失敗: %s", e)
 
@@ -39,6 +34,10 @@ def notify_new_material(course_name: str, material_title: str, file_name: str) -
 
 def notify_login_failed() -> None:
     show_windows_toast("【YCU-Board】ログインできません", "定期チェックを実行できませんでした。python -m src.main --login で再ログインしてください。")
+
+
+def notify_run_failed(reason: str) -> None:
+    show_windows_toast("【YCU-Board】定期チェックに失敗しました", f"YCU-Board に接続できませんでした（{reason[:80]}）。次の予定時刻に再試行します。")
 
 
 def notify_login_required() -> None:

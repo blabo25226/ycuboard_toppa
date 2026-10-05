@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 from playwright.sync_api import Page
 
 from src.config import CONFIG
-from src.downloader import archive_old_version, get_material_target_dir, resolve_save_path, sanitize_filename
+from src.downloader import archive_old_version, get_material_target_dir, resolve_save_path
 
 logger = logging.getLogger(__name__)
 
@@ -122,19 +122,20 @@ class YCUBoardCrawler:
             logger.warning("ダウンロード要素が見つかりません: %s", item["file_name"])
             return None
 
-        target_dir = get_material_target_dir(item["course_name"], item["material_title"])
-        save_path = target_dir / sanitize_filename(item["file_name"])
-        if save_path.exists() and item["reason"] != "NEW":
-            archive_old_version(save_path)  # 更新時は旧版を残す
-        else:
-            save_path = resolve_save_path(target_dir, item["file_name"])
-
         with self.page.expect_download(timeout=60000) as info:
             target.first.click()
         download = info.value
         if download.failure():
             logger.error("ダウンロード失敗: %s (%s)", item["file_name"], download.failure())
             return None
+
+        # 更新時は、この資料の旧版（記録済みの保存先）を退避してから同じ名前で保存する。
+        # 退避はダウンロード成功後に行う（失敗しても手元のファイルを失わない）。
+        old = Path(item["local_path"]) if item.get("local_path") else None
+        if item["reason"] == "UPDATED" and old and old.exists():
+            archive_old_version(old)
+        target_dir = get_material_target_dir(item["course_name"], item["material_title"])
+        save_path = resolve_save_path(target_dir, item["file_name"])
         download.save_as(str(save_path))
         self.sleep()
         return save_path

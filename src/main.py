@@ -27,7 +27,7 @@ from src.config import (
 from src.crawler import YCUBoardCrawler
 from src.pipeline import run_cycle
 from src.schedule import in_maintenance, last_due_slot, missed_slot
-from src.state import load_state
+from src.state import load_state, update_state
 from src.winutil import find_watchers, powershell, start_watcher, stop_watchers
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s %(message)s", datefmt="%H:%M:%S")
@@ -284,7 +284,9 @@ def watch(headless: bool) -> None:
     # PC を閉じていた・常駐が止まっていたなどで直近の予定を取りこぼしていたら、起動直後に1回補う
     cfg = load_config()
     missed = missed_slot(load_state().get("last_run"), cfg["daily_run_times"]) if cfg["check_enabled"] else None
-    if missed:
+    if missed and in_maintenance(datetime.now()):
+        logger.info("取りこぼし（予定 %s）がありますが、メンテナンス時間帯のため補完しません。", missed.strftime("%m/%d %H:%M"))
+    elif missed:
         logger.info("取りこぼしを検出（予定 %s）。今すぐ1回実行して補います。", missed.strftime("%m/%d %H:%M"))
         try:
             run_once(headless=headless, download=cfg["download_enabled"], scheduled=True)
@@ -304,6 +306,9 @@ def watch(headless: bool) -> None:
                     continue
                 done.add(key)
                 if late > timedelta(minutes=CATCH_UP_MINUTES):
+                    # スリープ等で大きく遅れた予定は見送る（仕様）。--health が「固まっている」と誤判定しないよう記録する
+                    logger.warning("%s の巡回は %d 分以上遅れたため見送りました（スリープ等）。", hm, CATCH_UP_MINUTES)
+                    update_state(skipped_slot=slot.isoformat(timespec="minutes"))
                     continue
                 if in_maintenance(now):
                     logger.warning("メンテナンス時間帯のため %s の巡回をスキップします。", hm)

@@ -53,6 +53,7 @@ def ensure_logged_in(page: Page, timeout_seconds: int = 60) -> bool:
 
     start_time = time.time()
     notified_2fa = False
+    password_submitted = False  # 誤ったパスワードを繰り返し送るとアカウントがロックされるため、送信は1回だけ
 
     while time.time() - start_time < timeout_seconds:
         if is_logged_in(page):
@@ -95,7 +96,15 @@ def ensure_logged_in(page: Page, timeout_seconds: int = 60) -> bool:
             try:
                 passwd_input = page.locator("input[type='password'], input[name='passwd'], #i0118")
                 if passwd_input.count() > 0 and passwd_input.first.is_visible():
+                    if password_submitted:
+                        error = page.locator("#passwordError, #i0118Error, [role='alert']")
+                        if error.count() > 0 and error.first.is_visible():
+                            logger.error("パスワードが違います。id_password.txt を確認してください（ロックを避けるため再送信しません）。")
+                            return False
+                        time.sleep(1.5)  # 画面遷移の途中。再送信はしない
+                        continue
                     logger.info("パスワード入力画面を検出: パスワードを入力します。")
+                    password_submitted = True
                     passwd_input.first.fill(password)
                     time.sleep(0.5)
                     signin_btn = page.locator("input[type='submit'], #idSIButton9, button[type='submit']")

@@ -8,10 +8,18 @@ from playwright.sync_api import BrowserContext
 from src.auth import ensure_logged_in
 from src.config import load_config
 from src.crawler import YCUBoardCrawler, match_courses
-from src.diff_engine import apply_scan, compute_file_hash, init_db, pending_downloads, record_download
+from src.diff_engine import (
+    apply_scan,
+    compute_file_hash,
+    has_active_materials,
+    init_db,
+    pending_downloads,
+    record_download,
+    scratch_db,
+)
 from src.mailer import send_email, send_report
 from src.mailer import build_login_alert
-from src.notifier import notify_login_failed, notify_new_material
+from src.notifier import notify_login_failed, notify_new_material, notify_run_failed
 from src.state import load_state, now_iso, update_state
 
 logger = logging.getLogger(__name__)
@@ -37,13 +45,33 @@ def run_cycle(
     dry_run   : True ならダウンロードせず、保存対象を summary["pending"] に集めるだけ（メールも送らない）
     ログインできなかった場合は None を返す。
     """
+    if dry_run:
+        with scratch_db():  # 予行演習では本物の履歴DBを書き換えない
+            return _run_cycle(context, download=download, targets=targets, send_mail=False, scheduled=scheduled,
+                              initial=initial, dry_run=True)
+    return _run_cycle(context, download=download, targets=targets, send_mail=send_mail, scheduled=scheduled,
+                      initial=initial, dry_run=False)
+
+
+def _run_cycle(context, *, download, targets, send_mail, scheduled, initial, dry_run):
     cfg = load_config()
     if targets is None:
         targets = cfg["target_courses"]
     init_db()
 
     page = context.pages[0] if context.pages else context.new_page()
-    if not ensure_logged_in(page, timeout_seconds=60):
+    try:
+        logged_in = ensure_logged_in(page, timeout_seconds=60)
+    except (FileNotFoundError, ValueError):
+        raise  # 認証情報ファイルの不備は呼び出し側で案内する
+    except Exception as e:  # noqa: BLE001 - ネットワーク障害など。記録して本人に知らせる
+        logger.exception("YCU-Board に接続できませんでした")
+        if not dry_run:
+            update_state(last_run=now_iso(), last_result="error", last_error=_short(e))
+        if scheduled:
+            notify_run_failed(_short(e))
+        return None
+    if not logged_in:
         logger.error("ログインできませんでした。`python -m src.main --login` で再ログインしてください。")
         update_state(last_run=now_iso(), last_result="login_failed")
         if scheduled:
@@ -52,12 +80,6 @@ def run_cycle(
     recovered = bool(load_state().get("login_alert_sent"))
     if recovered:
         update_state(login_alert_sent=False)
-
-    crawler = YCUBoardCrawler(page)
-    courses = crawler.get_enrolled_courses()
-    target_ids = {c["id"] for c in match_courses(courses, targets)} if download else set()
-    if download and targets and not target_ids:
-        logger.warning("対象講義 %s に一致する履修講義がありません。", targets)
 
     summary = {
         "started": datetime.now(),
@@ -70,9 +92,27 @@ def run_cycle(
         "pending": [],
     }
 
+    crawler = YCUBoardCrawler(page)
+    try:
+        courses = crawler.get_enrolled_courses()
+        if not courses:
+            raise RuntimeError("時間割から講義を1件も読み取れませんでした（読み込みの失敗、または学期の切り替わり）")
+    except Exception as e:  # noqa: BLE001 - 「講義0件・更新なし」と誤って報告しないよう、エラーとして結果に載せる
+        logger.exception("履修講義の取得に失敗しました")
+        summary["errors"].append(f"履修講義の取得: {_short(e)}")
+        courses = []
+    target_ids = {c["id"] for c in match_courses(courses, targets)} if download else set()
+    if download and targets and courses and not target_ids:
+        logger.warning("対象講義 %s に一致する履修講義がありません。", targets)
+
     for course in courses:
         try:
             items = crawler.scrape_materials(course)
+            if not items and has_active_materials(course["id"]):
+                # 前回あった資料が全部消えた → 読み込み失敗のことが多いので、1回だけ読み直して確かめる
+                logger.warning("%s: 資料が0件として読み取られたため、読み直します。", course["name"])
+                crawler.sleep()
+                items = crawler.scrape_materials(course)
             changes = apply_scan(course["id"], items)
             summary["courses"].append(
                 {"id": course["id"], "name": course["name"], "count": len(items), "changes": changes}
@@ -98,6 +138,7 @@ def run_cycle(
     update_state(
         last_run=now_iso(),
         last_result="ok" if not summary["errors"] else "error",
+        last_error=summary["errors"][0] if summary["errors"] else None,
         last_downloads=len(summary["downloads"]),
     )
     cfg = load_config()
@@ -110,6 +151,10 @@ def run_cycle(
         else:
             logger.info("更新・エラーが無いためメールは送りません（email_only_on_change）")
     return summary
+
+
+def _short(e: Exception) -> str:
+    return (str(e).splitlines() or [type(e).__name__])[0][:200]
 
 
 def _alert_login_failed(context: BrowserContext, send_mail: bool) -> None:

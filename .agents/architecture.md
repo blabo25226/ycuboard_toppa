@@ -20,6 +20,9 @@
 - 画面構造が変わったらまず `crawler.py` の `_SCRAPE_MATERIALS_JS` とセレクタを疑う。
 
 ## 実装上の注意
+- DB 接続は `diff_engine.get_connection()`（コミットして必ず閉じる）を使う。`sqlite3.connect` の `with` だけでは閉じず、Windows ではファイルがロックされる。
+- 差し替え（ID だけ変わった再アップロード）は、旧行の `local_path` を新しい行に引き継ぎ `downloaded_updated_on` を NULL にして「更新」として再取得させ、旧行は `removed=1` にする。
+- `config.json` と `state.json` は `config.write_atomic` で書く（常駐が書き込み途中を読まないように）。
 - 差分のキーは `(course_id, resource_id)`。指紋は `(file_name, updated_on, material_title)`。
 - ダウンロード要否は `pending_downloads`（DB の `local_path` / `downloaded_updated_on` と実ファイルの有無）で決める。差分検知とは独立しているので、途中で失敗しても次回に再試行される。
 - `run_cycle` は講義ごとに例外を捕まえて続行し、エラーはレポートに載せる。
@@ -29,7 +32,7 @@
 
 ## 動作確認の方法
 - 画面を出さずにチェック: `python -m src.main --once --no-mail`
-- 差分判定のテスト: `diff_engine.DB_PATH` を一時ファイルに差し替えて `apply_scan` / `pending_downloads` を呼ぶ。
+- 差分判定のテスト: `diff_engine.DB_PATH` を一時ファイルに差し替えて `apply_scan` / `pending_downloads` を呼ぶ（`diff_engine.scratch_db()` でも可。`--dry-run` はこれで本物の DB を守っている）。
 - メール単体: `python -m src.mailer`（自分宛にテストメールが1通届く）
 - 実運用の確認はアカウントに触れるので、利用者の了承を得てから行う。
 

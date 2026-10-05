@@ -2,7 +2,7 @@
 import json
 from datetime import datetime
 
-from src.config import DB_PATH
+from src.config import DB_PATH, write_atomic
 
 STATE_FILE = DB_PATH.parent / "state.json"
 
@@ -17,7 +17,7 @@ def load_state() -> dict:
 def update_state(**changes) -> dict:
     state = load_state()
     state.update(changes)
-    STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_atomic(STATE_FILE, json.dumps(state, ensure_ascii=False, indent=2))
     return state
 
 

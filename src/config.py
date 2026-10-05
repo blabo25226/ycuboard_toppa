@@ -1,9 +1,10 @@
 """設定の読み書き。値は config.json に保存し、毎回読み直すので実行中の変更も反映される。"""
 import json
+import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 CONFIG_FILE = BASE_DIR / "config.json"
@@ -46,6 +47,8 @@ def load_config() -> dict:
             user = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             user = {}
+        if not isinstance(user, dict):
+            user = {}
         # 旧キー automation_enabled からの移行
         if "automation_enabled" in user:
             user.setdefault("check_enabled", user["automation_enabled"])
@@ -59,8 +62,29 @@ def load_config() -> dict:
     return cfg
 
 
+def config_error() -> Optional[str]:
+    """config.json が読めない（壊れている）なら理由を返す。無い・正常なら None。
+
+    load_config は読めないと黙って既定値（定期チェック OFF）で動くため、--health で知らせるのに使う。
+    """
+    if not CONFIG_FILE.exists():
+        return None
+    try:
+        data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return f"config.json を読めません: {str(e)[:120]}"
+    return None if isinstance(data, dict) else "config.json の形式が正しくありません"
+
+
 def save_config(cfg: dict) -> None:
-    CONFIG_FILE.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    write_atomic(CONFIG_FILE, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
+
+
+def write_atomic(path: Path, text: str) -> None:
+    """書き込み途中のファイルを常駐が読んで「壊れた設定」と見なさないよう、一時ファイルに書いてから置き換える。"""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def update_config(**changes) -> dict:

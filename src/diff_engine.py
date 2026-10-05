@@ -1,9 +1,12 @@
 """資料のスナップショットを SQLite に保存し、前回との差分(新規/更新/削除)とダウンロード要否を判定する。"""
 import hashlib
+import shutil
 import sqlite3
+import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, Iterator, List
 
 from src.config import DB_PATH
 
@@ -46,10 +49,16 @@ class Changes:
         return bool(self.new or self.updated or self.removed)
 
 
-def get_connection() -> sqlite3.Connection:
+@contextmanager
+def get_connection() -> Iterator[sqlite3.Connection]:
+    """コミットして必ず閉じる接続（sqlite3 の with だけでは閉じず、Windows ではファイルがロックされたままになる）。"""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def init_db() -> None:
@@ -86,6 +95,7 @@ def apply_scan(course_id: str, items: List[dict]) -> Changes:
         current_ids = {it["resource_id"] for it in items}
         vanished = [r for rid, r in stored.items() if rid not in current_ids]
 
+        replacements = []  # (旧行, 新しい resource_id)
         for it in items:
             prev = stored.get(it["resource_id"])
             if prev is None:
@@ -97,6 +107,7 @@ def apply_scan(course_id: str, items: List[dict]) -> Changes:
                 )
                 if replaced is not None:
                     vanished.remove(replaced)
+                    replacements.append((replaced, it["resource_id"]))
                     changes.updated.append({**it, "reason": "差し替え"})
                 elif not changes.baseline:
                     changes.new.append({**it, "reason": NEW})
@@ -122,6 +133,21 @@ def apply_scan(course_id: str, items: List[dict]) -> Changes:
                 it,
             )
 
+        for old, new_rid in replacements:
+            # 旧版のローカルファイルを新しい ID に引き継ぎ、downloaded_updated_on を空にして「更新」として再取得させる
+            # （ダウンロード時に旧版を退避し、同じファイル名で保存し直す）
+            conn.execute(
+                """
+                UPDATE materials SET local_path = ?, file_hash = ?, downloaded_updated_on = NULL, downloaded_at = ?
+                WHERE course_id = ? AND resource_id = ? AND local_path IS NULL
+                """,
+                (old["local_path"], old["file_hash"], old["downloaded_at"], course_id, new_rid),
+            )
+            conn.execute(
+                "UPDATE materials SET removed = 1 WHERE course_id = ? AND resource_id = ?",
+                (course_id, old["resource_id"]),
+            )
+
         for r in vanished:
             changes.removed.append(dict(r))
             conn.execute(
@@ -129,6 +155,32 @@ def apply_scan(course_id: str, items: List[dict]) -> Changes:
                 (course_id, r["resource_id"]),
             )
     return changes
+
+
+def has_active_materials(course_id: str) -> bool:
+    """前回の記録で、この講義に（削除されていない）資料があったか。"""
+    init_db()
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM materials WHERE course_id = ? AND removed = 0 LIMIT 1", (course_id,)
+        ).fetchone()
+    return row is not None
+
+
+@contextmanager
+def scratch_db():
+    """一時的に履歴DBの複製を使う（予行演習で本物の記録を書き換えないため）。"""
+    global DB_PATH
+    original = DB_PATH
+    with tempfile.TemporaryDirectory() as tmp:
+        copy = Path(tmp) / "history.db"
+        if original.exists():
+            shutil.copy2(original, copy)
+        DB_PATH = copy
+        try:
+            yield
+        finally:
+            DB_PATH = original
 
 
 def pending_downloads(course_id: str) -> List[dict]:
@@ -144,7 +196,7 @@ def pending_downloads(course_id: str) -> List[dict]:
     for r in rows:
         if not r["local_path"] or not Path(r["local_path"]).exists():
             reason = NEW if not r["downloaded_at"] else "ローカルファイル消失"
-        elif (r["downloaded_updated_on"] or "") != (r["updated_on"] or ""):
+        elif r["downloaded_updated_on"] is None or r["downloaded_updated_on"] != (r["updated_on"] or ""):
             reason = UPDATED
         else:
             continue
