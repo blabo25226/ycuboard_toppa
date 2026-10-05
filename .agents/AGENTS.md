@@ -7,6 +7,9 @@ YCU-Board（横浜市立大学 LMS）の講義資料を定期チェックし、�
 - コマンド・設定・動作の仕様 → [usage.md](usage.md)
 - 実装を直す・拡張する → [architecture.md](architecture.md)
 
+## 対象範囲（補足）
+- YCU-Board の教材・テスト・課題に加え、**Teams（SharePoint）の講義資料**も任意で対象にできる（`--teams-on`）。仕様は [usage.md](usage.md) の「Teams の講義資料」。
+
 ## 対象環境
 - **Windows 専用**（トースト通知・タスクスケジューラ・パス処理）。他の OS は対応しない。`--doctor` は Windows 以外を NG にする。
 
