@@ -1,2 +1,9 @@
 id_password.txt
+smtp_password.txt
 output/
+data/
+logs/
+__pycache__/
+*.pyc
+.env
+.claude/settings.local.json
