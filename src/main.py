@@ -56,11 +56,11 @@ def open_context(playwright, headless: bool):
     )
 
 
-def run_once(*, headless: bool, download: bool, targets=None, send_mail: bool = True):
+def run_once(*, headless: bool, download: bool, targets=None, send_mail: bool = True, scheduled: bool = False):
     with sync_playwright() as p:
         context = open_context(p, headless)
         try:
-            return run_cycle(context, download=download, targets=targets, send_mail=send_mail)
+            return run_cycle(context, download=download, targets=targets, send_mail=send_mail, scheduled=scheduled)
         finally:
             context.close()
 
@@ -191,7 +191,20 @@ def print_status() -> None:
     print(f"  結果メール        : {onoff(cfg['email_enabled'])}   (--mail-on / --mail-off)  宛先: {mail} / {when} (--mail-changes-only / --mail-always)")
     print(f"  巡回時刻          : {', '.join(cfg['daily_run_times'])}  (1日{len(cfg['daily_run_times'])}回, --set-times)")
     print(f"  ダウンロード対象  : {targets}  (--set-courses)")
-    print(f"  保存先            : {cfg['output_dir']}  (--set-output)\n")
+    print(f"  保存先            : {cfg['output_dir']}  (--set-output)")
+
+    from src.doctor import check_task
+    from src.state import load_state
+
+    registered, task_msg = check_task()
+    state = load_state()
+    last = {"ok": "成功", "error": "一部エラー", "login_failed": "ログイン失敗（要 --login）"}.get(state.get("last_result"), "")
+    print("  --- 状態 ---")
+    print(f"  自動起動          : {task_msg}" + ("" if registered else "  ← 登録しないと定期チェックは動きません"))
+    print(f"  最終実行          : {state['last_run'].replace('T', ' ')}  {last}" if state.get("last_run") else "  最終実行          : まだ実行されていません")
+    if state.get("login_alert_sent"):
+        print("  ※ ログイン失敗をお知らせ済みです。python -m src.main --login で復旧してください。")
+    print()
 
 
 def watch(headless: bool) -> None:
@@ -220,7 +233,7 @@ def watch(headless: bool) -> None:
                     continue
                 logger.info("定期巡回を開始します (%s)", hm)
                 try:
-                    run_once(headless=headless, download=cfg["download_enabled"])
+                    run_once(headless=headless, download=cfg["download_enabled"], scheduled=True)
                 except Exception:  # noqa: BLE001 - 常駐を止めない
                     logger.exception("定期巡回に失敗しました")
         time.sleep(20)

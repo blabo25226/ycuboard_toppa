@@ -4,11 +4,11 @@
 
 | スキル | 内容 | ファイル |
 |---|---|---|
-| `/set_env` | 環境設定: Python・依存、ID/パスワード、ログイン（初回/2回目）、メール、履修講義の確認 | [skills/set_env/SKILL.md](skills/set_env/SKILL.md) |
-| `/settings` | 利用設定: 定期監査の ON/OFF と回数・時刻、講義ごとの自動ダウンロード、結果メール | [skills/settings/SKILL.md](skills/settings/SKILL.md) |
+| `/ycu-setup` | 環境設定: Python・依存、ID/パスワード、ログイン（初回/2回目）、メール、履修講義の確認 | [skills/ycu-setup/SKILL.md](skills/ycu-setup/SKILL.md) |
+| `/ycu-config` | 利用設定: 定期監査の ON/OFF と回数・時刻、講義ごとの自動ダウンロード、結果メール | [skills/ycu-config/SKILL.md](skills/ycu-config/SKILL.md) |
 
-- 初めて使う利用者 → `/set_env`（最後に `/settings` へ続く）。
-- 設定だけ変えたい → `/settings`。
+- 初めて使う利用者 → `/ycu-setup`（最後に `/ycu-config` へ続く）。
+- 設定だけ変えたい → `/ycu-config`。
 - Claude Code では `.claude/skills/` から同名のスキルとして呼べる。他のエージェントは `skills/*/SKILL.md` を直接読む。
 
 ## 診断・確認用コマンド（スキルが使う）

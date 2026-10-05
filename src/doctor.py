@@ -38,7 +38,7 @@ def _check_credentials() -> Tuple[bool, str]:
     return True, f"ID: {masked}@{email.split('@', 1)[1]} / パスワード: 記入あり"
 
 
-def _check_task() -> Tuple[bool, str]:
+def check_task() -> Tuple[bool, str]:
     try:
         r = subprocess.run(["schtasks", "/query", "/tn", "YCUBoardWatcher"], capture_output=True)
         return r.returncode == 0, "登録済み" if r.returncode == 0 else "未登録（--install-task で登録）"
@@ -60,7 +60,7 @@ def run_doctor() -> int:
     logged_before = (AUTH_PROFILE_DIR / "Default").exists()
     info.append(("ログイン履歴", logged_before, "あり（2回目以降のログイン確認が可能）" if logged_before else "なし（初回ログインが必要: --login）"))
     info.append(("config.json", CONFIG_FILE.exists(), "あり" if CONFIG_FILE.exists() else "なし（既定値で動作。設定を変えると作成される）"))
-    info.append(("自動起動タスク", *_check_task()))
+    info.append(("自動起動タスク", *check_task()))
 
     print("\n=== 環境診断 ===")
     for name, ok, msg in required:

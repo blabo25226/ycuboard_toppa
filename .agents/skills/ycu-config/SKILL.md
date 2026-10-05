@@ -1,14 +1,14 @@
 ---
-name: settings
-description: YCU-Board 資料チェッカーの利用設定を、学生と対話しながら決める。定期監査のON/OFFと回数・時刻、差分があった講義の資料を講義ごとに自動ダウンロードするか、結果をメールで送るかを確認して反映する。「設定したい」「/settings」と言われたとき、または /set_env の最後に使う。
+name: ycu-config
+description: YCU-Board 資料チェッカーの利用設定を、学生と対話しながら決める。定期監査のON/OFFと回数・時刻、差分があった講義の資料を講義ごとに自動ダウンロードするか、結果をメールで送るかを確認して反映する。「設定したい」「/ycu-config」と言われたとき、または /ycu-setup の最後に使う。
 ---
 
-# /settings — 利用設定
+# /ycu-config — 利用設定
 
-学生に1つずつ尋ねて決め、**選んだ内容をコマンドで反映し、最後に一覧で見せて確認する。** 環境が整っていること（`/set_env`）が前提。
+学生に1つずつ尋ねて決め、**選んだ内容をコマンドで反映し、最後に一覧で見せて確認する。** 環境が整っていること（`/ycu-setup`）が前提。
 
 ## 進め方のルール
-- まず `python -m src.main --doctor` を実行する。必須項目が NG なら、先に `/set_env`（`.agents/skills/set_env/SKILL.md`）を勧めて終了する。
+- まず `python -m src.main --doctor` を実行する。必須項目が NG なら、先に `/ycu-setup`（`.agents/skills/ycu-setup/SKILL.md`）を勧めて終了する。
 - 最初に `python -m src.main --status` で**現在の設定**を学生に見せる。変えたくない項目は触らない。
 - 質問は1回に1項目。各項目の選択肢と初期値を示す。選択肢を出せるツール（Claude Code の AskUserQuestion など）があれば使う。
 - 設定は `config.json` を直接編集せず、必ず `python -m src.main --…` で反映する（入力の検証が入る）。
@@ -50,6 +50,7 @@ description: YCU-Board 資料チェッカーの利用設定を、学生と対話
    - 更新・保存・エラーがあったときだけ → `--mail-changes-only`（1日の回数が多いときに勧める）
 3. **宛先**: 初期は ID のアドレス。別のアドレスにしたい場合は `--set-mail-to アドレス`。
 4. メールに載る内容: 確認した講義の数、新しい資料／更新された資料、保存したファイル、エラー。
+5. **ログインできなくなったとき**のお知らせも、メール ON なら同じ宛先に届く（復旧するまで1回だけ）。Windows の通知も出る。ただし Microsoft のサインインごと切れているとメールは送れないので、`--status` の「最終実行」で確認できることも伝える。
 
 ## 4. 確認と反映
 1. `python -m src.main --status` を実行し、**設定の一覧を見せて**「この内容でよいですか」と確認する。違う項目があればその項目に戻る。
@@ -58,7 +59,7 @@ description: YCU-Board 資料チェッカーの利用設定を、学生と対話
    - 登録した直後に始めたいときは PowerShell で `Start-ScheduledTask -TaskName YCUBoardWatcher`
    - 登録しない場合は、使うたびに `python -m src.main --watch` を実行する必要がある。
 3. 動作テストを希望するなら、`python -m src.main --once --no-mail` を実行する（ダウンロードが ON なら資料が保存される）。結果を一緒に見る。
-4. 最後に、設定の変え方（このスキル `/settings` をいつでも呼べること、README の「設定を変える」）と、ログイン切れのときは `python -m src.main --login` を伝える。
+4. 最後に、設定の変え方（このスキル `/ycu-config` をいつでも呼べること、README の「設定を変える」）と、ログイン切れのときは `python -m src.main --login` を伝える。
 
 ## 設定の対応表
 | 質問 | コマンド |

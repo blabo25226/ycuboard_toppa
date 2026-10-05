@@ -37,6 +37,10 @@ def notify_new_material(course_name: str, material_title: str, file_name: str) -
         show_windows_toast(f"【YCU-Board 新着資料】{course_name}", f"{material_title} ({file_name})")
 
 
+def notify_login_failed() -> None:
+    show_windows_toast("【YCU-Board】ログインできません", "定期チェックを実行できませんでした。python -m src.main --login で再ログインしてください。")
+
+
 def notify_login_required() -> None:
     print("\n[要対応] Authenticator アプリで承認番号を入力してください。\n")
     show_windows_toast("【YCU-Board】再サインインが必要です", "Authenticatorアプリで承認番号を入力してください。")

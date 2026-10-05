@@ -29,6 +29,8 @@ def build_report(summary: dict) -> tuple:
     downloads = summary["downloads"]
     errors = summary["errors"]
 
+    if summary.get("recovered"):
+        lines.append("※ ログインできない状態でしたが、復旧しました。")
     lines.append(f"実行時刻: {summary['started']:%Y-%m-%d %H:%M}")
     lines.append(f"チェックした講義: {len(summary['courses'])} 件 / 新規資料 {n_new} 件 / 更新 {n_upd} 件")
     lines.append(f"ダウンロード: {len(downloads)} 件" if summary["download_enabled"] else "ダウンロード: OFF")
@@ -56,6 +58,27 @@ def build_report(summary: dict) -> tuple:
     if errors:
         flag += "・エラーあり"
     return f"[YCU-Board] {flag} ({summary['started']:%m/%d %H:%M})", "\n".join(lines)
+
+
+def build_login_alert() -> tuple:
+    """ログインできなくなったときのお知らせ (件名, 本文)。"""
+    now = datetime.now()
+    body = "\n".join([
+        "YCU-Board に自動ログインできなかったため、定期チェックを実行できませんでした。",
+        f"発生時刻: {now:%Y-%m-%d %H:%M}",
+        "",
+        "考えられる原因:",
+        "  ・サインインの有効期限が切れた（Authenticator での承認が必要）",
+        "  ・パスワードを変更した（id_password.txt を更新してください）",
+        "  ・大学側のメンテナンス（毎週火曜 1:00〜6:00）",
+        "",
+        "対処: PC で次のコマンドを実行し、画面の指示に従ってください。",
+        "  python -m src.main --login",
+        "（AI エージェントなら /ycu-setup でも確認できます）",
+        "",
+        "※ このお知らせは、復旧するまで1回だけ送ります。復旧すると、次の結果メールでお知らせします。",
+    ])
+    return f"[YCU-Board] ログインできません（要対応） ({now:%m/%d %H:%M})", body
 
 
 def _recipient(cfg: dict) -> str:

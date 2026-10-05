@@ -3,9 +3,12 @@
 YCU-Board（横浜市立大学 LMS）の講義資料を定期チェックし、更新があれば自動ダウンロードしてメールで報告するツール。学内の誰でも `git clone` して自分のアカウントで使う前提。Python 3.10+ / Playwright / Windows。
 
 ## 読む順番
-- 利用者のセットアップ・設定を手伝う → [setup-guide.md](setup-guide.md)。スキル `/set_env`（環境設定）と `/settings`（利用設定）が本体: [skills/set_env/SKILL.md](skills/set_env/SKILL.md)、[skills/settings/SKILL.md](skills/settings/SKILL.md)
+- 利用者のセットアップ・設定を手伝う → [setup-guide.md](setup-guide.md)。スキル `/ycu-setup`（環境設定）と `/ycu-config`（利用設定）が本体: [skills/ycu-setup/SKILL.md](skills/ycu-setup/SKILL.md)、[skills/ycu-config/SKILL.md](skills/ycu-config/SKILL.md)
 - コマンド・設定・動作の仕様 → [usage.md](usage.md)
 - 実装を直す・拡張する → [architecture.md](architecture.md)
+
+## 対象環境
+- **Windows 専用**（トースト通知・タスクスケジューラ・パス処理）。他の OS は対応しない。`--doctor` は Windows 以外を NG にする。
 
 ## 守ること
 - `id_password.txt`（ID/パスワード）、`smtp_password.txt`、`config.json`、`data/`（ログインプロファイル・履歴DB）、`output/`、`logs/` は個人情報。git に入れない（`.gitignore` 済み）。中身をログ・チャット・コミットに出さない。読む必要があるときも、行数や文字数など中身を出さない確認にとどめる。

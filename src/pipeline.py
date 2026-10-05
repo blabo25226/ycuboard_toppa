@@ -9,8 +9,10 @@ from src.auth import ensure_logged_in
 from src.config import load_config
 from src.crawler import YCUBoardCrawler, match_courses
 from src.diff_engine import apply_scan, compute_file_hash, init_db, pending_downloads, record_download
-from src.mailer import send_report
-from src.notifier import notify_new_material
+from src.mailer import send_email, send_report
+from src.mailer import build_login_alert
+from src.notifier import notify_login_failed, notify_new_material
+from src.state import load_state, now_iso, update_state
 
 logger = logging.getLogger(__name__)
 
@@ -21,12 +23,14 @@ def run_cycle(
     download: bool,
     targets: Optional[List[str]] = None,
     send_mail: bool = True,
+    scheduled: bool = False,
 ) -> Optional[dict]:
     """
     context   : ログイン用プロファイルで起動済みのブラウザ
     download  : True なら targets に一致する講義の新規/更新資料を保存する
     targets   : ダウンロード対象の講義名(部分一致)。None なら config の target_courses、空なら全講義
     send_mail : True なら結果をメール送信する（config の email_enabled も別途必要）
+    scheduled : True（定期実行）なら、ログインできなかったときに本人へ通知する
     ログインできなかった場合は None を返す。
     """
     cfg = load_config()
@@ -37,7 +41,13 @@ def run_cycle(
     page = context.pages[0] if context.pages else context.new_page()
     if not ensure_logged_in(page, timeout_seconds=60):
         logger.error("ログインできませんでした。`python -m src.main --login` で再ログインしてください。")
+        update_state(last_run=now_iso(), last_result="login_failed")
+        if scheduled:
+            _alert_login_failed(context, send_mail)
         return None
+    recovered = bool(load_state().get("login_alert_sent"))
+    if recovered:
+        update_state(login_alert_sent=False)
 
     crawler = YCUBoardCrawler(page)
     courses = crawler.get_enrolled_courses()
@@ -51,6 +61,7 @@ def run_cycle(
         "courses": [],
         "downloads": [],
         "errors": [],
+        "recovered": recovered,
     }
 
     for course in courses:
@@ -73,9 +84,14 @@ def run_cycle(
             logger.exception("講義の巡回に失敗: %s", course["name"])
             summary["errors"].append(f"{course['name']}: {e}")
 
+    update_state(
+        last_run=now_iso(),
+        last_result="ok" if not summary["errors"] else "error",
+        last_downloads=len(summary["downloads"]),
+    )
     cfg = load_config()
     if send_mail and cfg["email_enabled"]:
-        notable = bool(summary["downloads"] or summary["errors"]) or any(
+        notable = bool(summary["downloads"] or summary["errors"] or recovered) or any(
             c["changes"].changed or c["changes"].baseline for c in summary["courses"]
         )
         if notable or not cfg["email_only_on_change"]:
@@ -83,6 +99,23 @@ def run_cycle(
         else:
             logger.info("更新・エラーが無いためメールは送りません（email_only_on_change）")
     return summary
+
+
+def _alert_login_failed(context: BrowserContext, send_mail: bool) -> None:
+    """ログイン失敗を本人に知らせる。メールは復旧するまで1回だけ（連日の重複を避ける）。
+
+    結果メールは Outlook on the web から送るため、Microsoft 側のサインインが切れているときは送れない。
+    その場合に備えてトースト通知と state.json（--status で表示）も併用する。
+    """
+    notify_login_failed()
+    if not (send_mail and load_config()["email_enabled"]):
+        return
+    if load_state().get("login_alert_sent"):
+        logger.info("ログイン失敗のお知らせは送信済みです（復旧するまで再送しません）")
+        return
+    subject, body = build_login_alert()
+    if send_email(subject, body, context):
+        update_state(login_alert_sent=True)
 
 
 def _download_pending(crawler: YCUBoardCrawler, course: dict, summary: dict) -> None:
