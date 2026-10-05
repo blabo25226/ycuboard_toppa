@@ -16,6 +16,7 @@
 ## サイトの構造（2026年10月時点で確認）
 - 時間割: `/lms/timetable`。講義セルは `.timetable-course-top-btn.divTableCellHeader`、`id` が講義ID(`idnumber`)。学年見出しのボタン(`2026DS2026-3102` など)は `divTableCellHeader` が無いので除外している。
 - 講義ページ: `/lms/course?idnumber=<講義ID>`。教材欄は `#materialList`。資料タイトルは `.block-wide label.bold-txt`、ファイル行は `.materialCss`（`id="material<resource_id>"`、`label.fileDownload` をクリックでダウンロード、`#dlMaterialId` が資料ID、`.course-view-material-update` が登録日）。
+- テスト欄: `#examination .course-result-list`（タイトル `.course-view-examination-name` の href に `examinationId`、期間 `.course-view-examination-period`）。課題欄: `#reportList .sortReportBlock`（`input.reportId`、`.course-view-report-name`、`.course-view-report-time-start/end`、提出状況 `.course-view-report-status`）。読み取りは `crawler._SCRAPE_COURSEWORK_JS`、差分は `diff_engine.apply_coursework`（`coursework` テーブル）。
 - YCU-Board のセッション Cookie はブラウザ再起動で消える。Microsoft 側のセッションは永続プロファイルに残るので、毎回 SSO を通れば承認なしで入れる。
 - 画面構造が変わったらまず `crawler.py` の `_SCRAPE_MATERIALS_JS` とセレクタを疑う。
 
@@ -23,6 +24,7 @@
 - DB 接続は `diff_engine.get_connection()`（コミットして必ず閉じる）を使う。`sqlite3.connect` の `with` だけでは閉じず、Windows ではファイルがロックされる。
 - 差し替え（ID だけ変わった再アップロード）は、旧行の `local_path` を新しい行に引き継ぎ `downloaded_updated_on` を NULL にして「更新」として再取得させ、旧行は `removed=1` にする。
 - `config.json` と `state.json` は `config.write_atomic` で書く（常駐が書き込み途中を読まないように）。
+- 「その講義の教材／テスト／課題を初めて確認したか」は `scans` テーブルで判断する（行の有無では、最初は0件だった講義に後から出た最初の1件を見逃すため）。
 - 差分のキーは `(course_id, resource_id)`。指紋は `(file_name, updated_on, material_title)`。
 - ダウンロード要否は `pending_downloads`（DB の `local_path` / `downloaded_updated_on` と実ファイルの有無）で決める。差分検知とは独立しているので、途中で失敗しても次回に再試行される。
 - `run_cycle` は講義ごとに例外を捕まえて続行し、エラーはレポートに載せる。
@@ -37,6 +39,6 @@
 - 実運用の確認はアカウントに触れるので、利用者の了承を得てから行う。
 
 ## 既知の制約 / 今後
-- テスト・課題（提出物）は未対応。
+- テスト・課題は通知のみ（ダウンロード・提出はしない）。お知らせ・アンケート・掲示板は未対応。
 - Windows 専用（トースト通知、タスクスケジューラ）。
 - 学部・学年の違いでページ構造が異なる場合は未検証。

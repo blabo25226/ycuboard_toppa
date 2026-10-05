@@ -21,6 +21,28 @@ logger = logging.getLogger(__name__)
 COMPOSE_URL = "https://outlook.office.com/mail/deeplink/compose?to={to}&subject={subject}"
 
 
+def coursework_lines(summary: dict) -> List[str]:
+    """テスト・課題の追加／更新／削除を、1件1文で返す（例: 「講義Aでテスト:第3回…が追加されました（解答期間 …）。」）"""
+    from src.diff_engine import KIND_LABEL
+
+    lines: List[str] = []
+    for c in summary["courses"]:
+        for kind, ch in c.get("coursework", {}).items():
+            label = KIND_LABEL[kind]
+            span = "解答期間" if kind == "test" else "提出期間"
+            for i in ch.new:
+                lines.append(f"{c['name']}で{label}:{i['title']}が追加されました" + (f"（{span} {i['period']}）。" if i["period"] else "。"))
+            for i in ch.updated:
+                if i.get("previous_period") and i["previous_period"] != i["period"]:
+                    detail = f"（{span} {i['previous_period']} → {i['period']}）"
+                else:
+                    detail = f"（{span} {i['period']}）" if i["period"] else ""
+                lines.append(f"{c['name']}で{label}:{i['title']}が更新されました{detail}。")
+            for i in ch.removed:
+                lines.append(f"{c['name']}で{label}:{i['title']}が削除されました。")
+    return lines
+
+
 def build_report(summary: dict) -> tuple:
     """巡回結果(summary)から (件名, 本文) を作る。"""
     lines: List[str] = []
@@ -32,7 +54,8 @@ def build_report(summary: dict) -> tuple:
     if summary.get("recovered"):
         lines.append("※ ログインできない状態でしたが、復旧しました。")
     lines.append(f"実行時刻: {summary['started']:%Y-%m-%d %H:%M}")
-    lines.append(f"チェックした講義: {len(summary['courses'])} 件 / 新規資料 {n_new} 件 / 更新 {n_upd} 件")
+    n_cw = len(coursework_lines(summary))
+    lines.append(f"チェックした講義: {len(summary['courses'])} 件 / 新規資料 {n_new} 件 / 更新 {n_upd} 件 / テスト・課題の更新 {n_cw} 件")
     lines.append(f"ダウンロード: {len(downloads)} 件" if summary["download_enabled"] else "ダウンロード: OFF")
     lines.append("")
 
@@ -45,8 +68,13 @@ def build_report(summary: dict) -> tuple:
             lines += [f"  + 新規: {i['material_title']} / {i['file_name']} ({i['updated_on']})" for i in ch.new]
             lines += [f"  * {i['reason']}: {i['material_title']} / {i['file_name']} ({i['updated_on']})" for i in ch.updated]
             lines += [f"  - 削除: {i['material_title']} / {i['file_name']}" for i in ch.removed]
-    if not any(c["changes"].changed or c["changes"].baseline for c in summary["courses"]):
+    cw_lines = coursework_lines(summary)
+    if not any(c["changes"].changed or c["changes"].baseline for c in summary["courses"]) and not cw_lines:
         lines.append("更新はありませんでした。")
+
+    if cw_lines:
+        lines += ["", "【テスト・課題の更新】（ダウンロード・提出はしていません。大学の画面で確認してください）"]
+        lines += [f"  ・{x}" for x in cw_lines]
 
     if downloads:
         lines += ["", "【ダウンロードした資料】"]
@@ -54,7 +82,7 @@ def build_report(summary: dict) -> tuple:
     if errors:
         lines += ["", "【エラー】"] + [f"  {e}" for e in errors]
 
-    flag = "初回監査完了" if summary.get("initial") else ("更新あり" if (n_new or n_upd or downloads) else "更新なし")
+    flag = "初回監査完了" if summary.get("initial") else ("更新あり" if (n_new or n_upd or downloads or cw_lines) else "更新なし")
     if errors:
         flag += "・エラーあり"
     return f"[YCU-Board] {flag} ({summary['started']:%m/%d %H:%M})", "\n".join(lines)

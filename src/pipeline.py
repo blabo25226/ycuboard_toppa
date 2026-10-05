@@ -9,8 +9,10 @@ from src.auth import ensure_logged_in
 from src.config import load_config
 from src.crawler import YCUBoardCrawler, match_courses
 from src.diff_engine import (
+    apply_coursework,
     apply_scan,
     compute_file_hash,
+    has_active_coursework,
     has_active_materials,
     init_db,
     pending_downloads,
@@ -114,9 +116,14 @@ def _run_cycle(context, *, download, targets, send_mail, scheduled, initial, dry
                 crawler.sleep()
                 items = crawler.scrape_materials(course)
             changes = apply_scan(course["id"], items)
-            summary["courses"].append(
-                {"id": course["id"], "name": course["name"], "count": len(items), "changes": changes}
-            )
+            entry = {"id": course["id"], "name": course["name"], "count": len(items), "changes": changes,
+                     "coursework": {}}
+            summary["courses"].append(entry)
+            try:  # テスト・課題の失敗で、教材のチェックとダウンロードを止めない
+                entry["coursework"] = _scan_coursework(crawler, course)
+            except Exception as e:  # noqa: BLE001
+                logger.exception("テスト・課題の確認に失敗: %s", course["name"])
+                summary["errors"].append(f"{course['name']}（テスト・課題）: {_short(e)}")
             logger.info(
                 "%s: 資料 %d 件 / 新規 %d 更新 %d 削除 %d%s",
                 course["name"], len(items), len(changes.new), len(changes.updated), len(changes.removed),
@@ -144,13 +151,30 @@ def _run_cycle(context, *, download, targets, send_mail, scheduled, initial, dry
     cfg = load_config()
     if send_mail and cfg["email_enabled"]:
         notable = bool(summary["downloads"] or summary["errors"] or recovered) or any(
-            c["changes"].changed or c["changes"].baseline for c in summary["courses"]
+            c["changes"].changed or c["changes"].baseline or any(ch.changed for ch in c["coursework"].values())
+            for c in summary["courses"]
         )
         if notable or not cfg["email_only_on_change"]:
             send_report(summary, context)
         else:
             logger.info("更新・エラーが無いためメールは送りません（email_only_on_change）")
     return summary
+
+
+def _scan_coursework(crawler: YCUBoardCrawler, course: dict) -> dict:
+    """講義ページ(直前に開いたもの)のテスト・課題を前回と比べる → {"test": Changes, "report": Changes}。通知用で、保存や提出はしない。"""
+    data = crawler.scrape_coursework(course)
+    if any(not data[k] and has_active_coursework(course["id"], k) for k in data):
+        # 前回あったものが全部消えた → 読み込み失敗のことが多いので、1回だけ読み直して確かめる
+        logger.warning("%s: テスト・課題が0件として読み取られたため、読み直します。", course["name"])
+        crawler.sleep()
+        crawler.open_course(course)
+        data = crawler.scrape_coursework(course)
+    result = {kind: apply_coursework(course["id"], kind, items) for kind, items in data.items()}
+    for kind, ch in result.items():
+        if ch.changed:
+            logger.info("%s: %s 追加 %d 更新 %d 削除 %d", course["name"], kind, len(ch.new), len(ch.updated), len(ch.removed))
+    return result
 
 
 def _short(e: Exception) -> str:

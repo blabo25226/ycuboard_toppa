@@ -46,6 +46,37 @@ _SCRAPE_MATERIALS_JS = """
 }
 """
 
+# 講義ページの「テスト」欄(#examination)と「課題」欄(#reportList)の一覧を読み取る（ブラウザ内で実行）
+_SCRAPE_COURSEWORK_JS = r"""
+() => {
+  const t = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
+  const param = (href, key) => {
+    try { return new URL(href || '', location.href).searchParams.get(key) || ''; } catch (e) { return ''; }
+  };
+  const tests = [...document.querySelectorAll('#examination .contents-list .course-result-list')].map(row => {
+    const name = row.querySelector('.course-view-examination-name');
+    const title = t(name);
+    return {
+      item_id: param(name && name.getAttribute('href'), 'examinationId') || title,
+      title,
+      period: t(row.querySelector('.course-view-examination-period')),
+    };
+  });
+  const reports = [...document.querySelectorAll('#reportList .sortReportBlock')].map(row => {
+    const name = row.querySelector('.course-view-report-name');
+    const title = t(name);
+    const start = t(row.querySelector('.course-view-report-time-start'));
+    const end = t(row.querySelector('.course-view-report-time-end'));
+    return {
+      item_id: (row.querySelector('input.reportId') || {}).value || param(name && name.getAttribute('href'), 'reportId') || title,
+      title,
+      period: (start || end) ? start + ' ～ ' + end : '',
+    };
+  });
+  return { tests, reports };
+}
+"""
+
 
 def normalize_course_name(name: str) -> str:
     """講義名の照合用に正規化（全角/半角・空白・括弧・ローマ数字と算用数字の違いを吸収）。"""
@@ -112,6 +143,18 @@ class YCUBoardCrawler:
             r.pop("is_file")
             items.append({**r, "course_id": course["id"], "course_name": course["name"]})
         return items
+
+    def scrape_coursework(self, course: dict) -> Dict[str, List[dict]]:
+        """直前に開いた講義ページ(scrape_materials の直後)から、テストと課題の一覧を返す → {"test": [...], "report": [...]}"""
+        data = self.page.evaluate(_SCRAPE_COURSEWORK_JS)
+        out = {}
+        for kind, rows in (("test", data["tests"]), ("report", data["reports"])):
+            out[kind] = [
+                {**r, "course_id": course["id"], "course_name": course["name"]}
+                for r in rows
+                if r["title"]  # タイトルが読めない行は誤検出を避けて無視する
+            ]
+        return out
 
     def download(self, item: dict) -> Optional[Path]:
         """講義ページ上のファイルをクリックして保存し、保存先パスを返す。失敗時は None。"""

@@ -34,6 +34,33 @@ CREATE TABLE IF NOT EXISTS materials (
 )
 """
 
+# どの講義のどの種類(教材/テスト/課題)を、すでに一度確認したか。
+# 「最初は0件だった講義に、後から最初の1件が出た」を新着として扱うために、行の有無ではなくこの記録で判断する。
+SCANS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS scans (
+    course_id TEXT NOT NULL,
+    kind TEXT NOT NULL,                 -- material / test / report
+    first_scanned TEXT DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (course_id, kind)
+)
+"""
+
+# テスト・課題。ダウンロードや提出はせず、追加・更新・削除の通知だけに使う。
+COURSEWORK_SCHEMA = """
+CREATE TABLE IF NOT EXISTS coursework (
+    course_id TEXT NOT NULL,
+    kind TEXT NOT NULL,                 -- test / report
+    item_id TEXT NOT NULL,              -- examinationId / reportId
+    course_name TEXT NOT NULL,
+    title TEXT,
+    period TEXT,                        -- 解答期間・提出期間
+    first_seen TEXT DEFAULT CURRENT_TIMESTAMP,
+    last_seen TEXT DEFAULT CURRENT_TIMESTAMP,
+    removed INTEGER DEFAULT 0,
+    PRIMARY KEY (course_id, kind, item_id)
+)
+"""
+
 
 @dataclass
 class Changes:
@@ -64,6 +91,16 @@ def get_connection() -> Iterator[sqlite3.Connection]:
 def init_db() -> None:
     with get_connection() as conn:
         conn.execute(SCHEMA)
+        conn.execute(SCANS_SCHEMA)
+        conn.execute(COURSEWORK_SCHEMA)
+
+
+def _scanned(conn, course_id: str, kind: str) -> bool:
+    return conn.execute("SELECT 1 FROM scans WHERE course_id = ? AND kind = ?", (course_id, kind)).fetchone() is not None
+
+
+def _mark_scanned(conn, course_id: str, kind: str) -> None:
+    conn.execute("INSERT OR IGNORE INTO scans (course_id, kind) VALUES (?, ?)", (course_id, kind))
 
 
 def compute_file_hash(filepath: Path) -> str:
@@ -89,7 +126,8 @@ def apply_scan(course_id: str, items: List[dict]) -> Changes:
         known_any = conn.execute(
             "SELECT 1 FROM materials WHERE course_id = ? LIMIT 1", (course_id,)
         ).fetchone()
-        changes.baseline = known_any is None
+        changes.baseline = known_any is None and not _scanned(conn, course_id, "material")
+        _mark_scanned(conn, course_id, "material")
 
         stored: Dict[str, sqlite3.Row] = {r["resource_id"]: r for r in rows}
         current_ids = {it["resource_id"] for it in items}
@@ -214,3 +252,63 @@ def record_download(course_id: str, resource_id: str, local_path: str, file_hash
             """,
             (local_path, file_hash, updated_on, course_id, resource_id),
         )
+
+
+# ---------- テスト・課題 ----------
+KIND_LABEL = {"test": "テスト", "report": "課題"}
+
+
+def apply_coursework(course_id: str, kind: str, items: List[dict]) -> Changes:
+    """今回取得したテスト／課題の一覧を前回と比較して差分を返し、記録を更新する（更新判定はタイトルと期間）。"""
+    init_db()
+    changes = Changes()
+    with get_connection() as conn:
+        any_row = conn.execute(
+            "SELECT 1 FROM coursework WHERE course_id = ? AND kind = ? LIMIT 1", (course_id, kind)
+        ).fetchone()
+        changes.baseline = any_row is None and not _scanned(conn, course_id, kind)
+
+        stored = {
+            r["item_id"]: r
+            for r in conn.execute(
+                "SELECT * FROM coursework WHERE course_id = ? AND kind = ? AND removed = 0", (course_id, kind)
+            )
+        }
+        current_ids = {it["item_id"] for it in items}
+
+        for it in items:
+            prev = stored.get(it["item_id"])
+            if prev is None:
+                if not changes.baseline:
+                    changes.new.append({**it, "reason": "追加"})
+            elif (prev["title"], prev["period"] or "") != (it["title"], it["period"] or ""):
+                changes.updated.append({**it, "reason": "更新", "previous_period": prev["period"] or ""})
+            conn.execute(
+                """
+                INSERT INTO coursework (course_id, kind, item_id, course_name, title, period)
+                VALUES (:course_id, :kind, :item_id, :course_name, :title, :period)
+                ON CONFLICT(course_id, kind, item_id) DO UPDATE SET
+                    course_name = excluded.course_name, title = excluded.title, period = excluded.period,
+                    last_seen = CURRENT_TIMESTAMP, removed = 0
+                """,
+                {**it, "kind": kind, "course_id": course_id},
+            )
+
+        for item_id, r in stored.items():
+            if item_id not in current_ids:
+                changes.removed.append(dict(r))
+                conn.execute(
+                    "UPDATE coursework SET removed = 1 WHERE course_id = ? AND kind = ? AND item_id = ?",
+                    (course_id, kind, item_id),
+                )
+        _mark_scanned(conn, course_id, kind)
+    return changes
+
+
+def has_active_coursework(course_id: str, kind: str) -> bool:
+    init_db()
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM coursework WHERE course_id = ? AND kind = ? AND removed = 0 LIMIT 1", (course_id, kind)
+        ).fetchone()
+    return row is not None
