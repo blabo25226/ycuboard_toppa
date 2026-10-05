@@ -23,6 +23,7 @@ from src.mailer import send_email, send_report
 from src.mailer import build_login_alert
 from src.notifier import notify_login_failed, notify_new_material, notify_run_failed
 from src.state import load_state, now_iso, update_state
+from src.teams import LOGIN_ERROR as TEAMS_LOGIN_ERROR
 from src.teams import run_teams
 
 logger = logging.getLogger(__name__)
@@ -143,7 +144,7 @@ def _run_cycle(context, *, download, targets, send_mail, scheduled, initial, dry
             summary["errors"].append(f"{course['name']}: {e}")
 
     if cfg["teams_enabled"] and courses:
-        run_teams(context, courses, target_ids, summary, dry_run=dry_run)
+        run_teams(context, courses, target_ids, summary, dry_run=dry_run, scheduled=scheduled)
 
     if dry_run:
         return summary
@@ -155,12 +156,19 @@ def _run_cycle(context, *, download, targets, send_mail, scheduled, initial, dry
     )
     cfg = load_config()
     if send_mail and cfg["email_enabled"]:
-        notable = bool(summary["downloads"] or summary["errors"] or recovered) or any(
+        errors = summary["errors"]
+        if summary.get("teams_login_failed") and load_state().get("teams_login_alert_sent"):
+            # Teams のログイン失敗はお知らせ済み。復旧するまで、これだけを理由にメールは送らない（結果メールには載る）
+            errors = [e for e in errors if e != TEAMS_LOGIN_ERROR]
+        notable = bool(summary["downloads"] or errors or recovered or summary.get("teams_recovered")
+                       or summary.get("teams_notices")) or any(
             c["changes"].changed or c["changes"].baseline or any(ch.changed for ch in c["coursework"].values())
             for c in summary["courses"]
         ) or any(t["changes"].changed or t["changes"].baseline for t in summary.get("teams", []))
         if notable or not cfg["email_only_on_change"]:
             summary["mail"] = "sent" if send_report(summary, context) else "failed"
+            if summary["mail"] == "sent" and summary.get("teams_login_failed"):
+                update_state(teams_login_alert_sent=True)
         else:
             summary["mail"] = "skipped"
             logger.info("更新・エラーが無いためメールは送りません（email_only_on_change）")

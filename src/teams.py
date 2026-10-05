@@ -7,6 +7,8 @@
 import logging
 import re
 import time
+import unicodedata
+from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 from urllib.parse import quote, urlparse
@@ -19,11 +21,13 @@ from src.diff_engine import (
     apply_teams_scan,
     compute_file_hash,
     has_active_teams_files,
+    has_teams_records,
     pending_teams_downloads,
     record_teams_download,
+    reset_teams_course,
 )
 from src.downloader import MAX_DIR_NAME_LENGTH, archive_old_version, resolve_save_path, sanitize_filename
-from src.notifier import notify_login_required, notify_new_material
+from src.notifier import notify_login_required, notify_new_material, notify_teams_login_failed
 from src.state import load_state, update_state
 
 logger = logging.getLogger(__name__)
@@ -33,6 +37,12 @@ LIBRARY_ROOT = "Shared Documents/General"  # チャンネル「一般」の「�
 EXCLUDED_FOLDERS = {"recordings"}  # 会議の録画は大きすぎるので対象外
 EXCLUDED_SUFFIXES = (".loop",)  # 会議チャットから自動で作られる Loop の部品。講義資料ではない
 MAX_DEPTH = 6
+MAX_FILE_BYTES = 200 * 1024 * 1024  # これより大きいファイルは保存しない（メモリ・時間の都合。動画など）
+LOGIN_ERROR = "Teams: SharePoint にログインできませんでした（Teams の講義資料は確認していません）"
+
+
+class FolderMissing(Exception):
+    """チャンネル「一般」のフォルダ（Shared Documents/General）がまだ無い。"""
 
 # 参加しているサイト（チーム）の名前とURLの一覧。権限のあるものだけが返る。
 _SEARCH_SITES_JS = """async () => {
@@ -47,12 +57,13 @@ _SEARCH_SITES_JS = """async () => {
 # General 配下のファイルを再帰的に列挙する。
 _LIST_FILES_JS = """async ([site, root, maxDepth, excluded]) => {
   const out = [];
-  const enc = p => encodeURI(p.replace(/'/g, "''")).replace(/#/g, '%23').replace(/\\?/g, '%3F');
+  // decodedurl なら、ファイル名・フォルダ名の % や # もそのまま扱える
+  const enc = p => encodeURIComponent(p.replace(/'/g, "''")).replace(/%2F/g, '/');
   async function walk(path, depth) {
-    const q = `${site}/_api/web/GetFolderByServerRelativeUrl('${enc(path)}')?$expand=Folders,Files`
+    const q = `${site}/_api/web/GetFolderByServerRelativePath(decodedurl='${enc(path)}')?$expand=Folders,Files`
       + `&$select=Folders/Name,Folders/ServerRelativeUrl,Files/Name,Files/UniqueId,Files/TimeLastModified,Files/Length,Files/ServerRelativeUrl`;
     const r = await fetch(q, {headers: {Accept: 'application/json;odata=nometadata'}, credentials: 'include'});
-    if (!r.ok) { out.push({err: r.status, path}); return; }
+    if (!r.ok) { out.push({err: r.status, path, depth}); return; }
     const j = await r.json();
     for (const f of j.Files) out.push({name: f.Name, id: f.UniqueId, modified: f.TimeLastModified, size: Number(f.Length), url: f.ServerRelativeUrl});
     if (depth < maxDepth) for (const d of j.Folders) {
@@ -139,39 +150,76 @@ def open_sharepoint(page: Page, timeout_seconds: int = 90) -> bool:
 
 
 # ---------- サイトの特定・一覧・ダウンロード ----------
-def find_team_sites(page: Page, courses: List[dict]) -> Dict[str, dict]:
-    """履修講義 → Teams のチーム（SharePoint サイト）。チーム名に講義名が含まれるものを対応づける。
+_SEPARATORS = re.compile(r"[_\s\-‐－–—・/|｜【】\[\]「」『』<>＜＞]+")
+# 年度の表記: R8 / 令和8年度 / 2026 / 2026年度（NFKC・小文字化した後の文字列に使う）
+_YEAR = re.compile(r"(?<![0-9a-z])(?:r|令和)(\d{1,2})(?:年度)?(?![0-9])|(?<![0-9])(20\d{2})(?:年度)?(?![0-9])")
 
-    一致したものは data/state.json に控え、検索結果から漏れたときの予備にする。
+
+def current_school_year(today: Optional[date] = None) -> int:
+    today = today or date.today()
+    return today.year if today.month >= 4 else today.year - 1
+
+
+def _years(title: str) -> set:
+    t = unicodedata.normalize("NFKC", title).lower()
+    return {2018 + int(m.group(1)) if m.group(1) else int(m.group(2)) for m in _YEAR.finditer(t)}
+
+
+def course_matches_team(course_name: str, team_title: str) -> bool:
+    """チーム名が講義名を表しているか。チーム名全体か、区切り（_ や空白など）で分けた一部が、年度の表記を除いて講義名と一致すること。
+
+    部分一致だけでは認めない（「データサイエンス1」が「データサイエンス10」や別の講義のチームに当たるのを防ぐ）。
     """
+    key = normalize_course_name(course_name)
+    t = unicodedata.normalize("NFKC", team_title).lower()
+    return bool(key) and any(normalize_course_name(_YEAR.sub("", seg)) == key for seg in [t, *_SEPARATORS.split(t)])
+
+
+def find_team_sites(page: Page, courses: List[dict], previous: Optional[Dict[str, dict]] = None) -> Dict[str, dict]:
+    """履修講義 → Teams のチーム（SharePoint サイト）。保存はしない（呼び出し側が state.json に控える）。
+
+    - チーム名が講義名と一致するもの（course_matches_team）だけを候補にする。
+    - 年度の表記があって今年度でないチーム（昨年度のチームなど）は除く。
+    - 前回と同じチームが候補にあれば、それを使い続ける（新しいチームが見つかっても勝手に切り替えない）。
+    - 複数あれば、今年度の表記があるもの → 短い名前の順。
+    - 検索に失敗したときは前回の対応表(previous)を使う。
+    """
+    previous = previous or {}
     rows = page.evaluate(_SEARCH_SITES_JS)
-    cache = load_state().get("teams_sites", {})
     if isinstance(rows, dict):
         logger.warning("チーム一覧を取得できませんでした（HTTP %s）。前回の対応表を使います。", rows.get("err"))
-        rows = []
+        return {c["id"]: previous[c["id"]] for c in courses if c["id"] in previous}
     sites = [
         {"title": r.get("Title") or "", "path": r.get("Path") or ""}
         for r in rows
         if (r.get("Path") or "").startswith(SP_HOST + "/sites/")
     ]
+    year = current_school_year()
     found: Dict[str, dict] = {}
     for course in courses:
         key = normalize_course_name(course["name"])
-        cands = [s for s in sites if key and key in normalize_course_name(s["title"])]
-        if len(cands) > 1:
-            # 複数あるときは、チーム名の区切り（_）が講義名と完全一致するもの、今年度らしい名前（R8 / 2026）、短い名前の順に優先する
-            def rank(s):
-                segments = [normalize_course_name(x) for x in s["title"].split("_")]
-                return (key not in segments and normalize_course_name(s["title"].removeprefix("2026年度")) != key,
-                        not re.search(r"R8|2026", s["title"]), len(s["title"]))
-            cands.sort(key=rank)
-            logger.info("%s: 該当するチームが複数あります。先頭を使います: %s", course["name"], [c["title"] for c in cands])
-        if cands:
-            found[course["id"]] = {"site": cands[0]["path"], "team": cands[0]["title"]}
-        elif course["id"] in cache and not sites:
-            found[course["id"]] = cache[course["id"]]
-    if found:
-        update_state(teams_sites={**cache, **found})
+        cands = [s for s in sites if course_matches_team(course["name"], s["title"])]
+        old_year = [s for s in cands if _years(s["title"]) and year not in _years(s["title"])]
+        cands = [s for s in cands if s not in old_year]
+        if old_year:
+            logger.info("%s: 今年度ではないチームは使いません: %s", course["name"], [s["title"] for s in old_year])
+        partial = [s["title"] for s in sites
+                   if key and key in normalize_course_name(s["title"]) and s not in cands and s not in old_year]
+        if partial:
+            logger.info("%s: 名前の一部だけが一致するチームは使いません: %s", course["name"], partial)
+        if not cands:
+            continue
+        prev = previous.get(course["id"]) or {}
+        keep = [s for s in cands if s["path"] == prev.get("site")]
+        if keep:
+            chosen = keep[0]
+        else:
+            cands.sort(key=lambda s: (year not in _years(s["title"]), len(s["title"])))
+            chosen = cands[0]
+            if len(cands) > 1:
+                logger.info("%s: 該当するチームが複数あります。「%s」を使います: %s",
+                            course["name"], chosen["title"], [c["title"] for c in cands])
+        found[course["id"]] = {"site": chosen["path"], "team": chosen["title"]}
     return found
 
 
@@ -180,6 +228,8 @@ def list_files(page: Page, site: str) -> List[dict]:
     root = urlparse(site).path + "/" + LIBRARY_ROOT
     rows = page.evaluate(_LIST_FILES_JS, [site, root, MAX_DEPTH, sorted(EXCLUDED_FOLDERS)])
     errors = [r for r in rows if "err" in r]
+    if len(errors) == 1 and errors[0]["err"] == 404 and errors[0]["depth"] == 0:
+        raise FolderMissing(root)  # チャンネルのフォルダがまだ作られていない（誰もファイルを置いていないチーム）
     if errors:
         raise RuntimeError(f"Teams のファイル一覧を取得できません（HTTP {errors[0]['err']}）: {errors[0]['path']}")
     prefix = root.rstrip("/") + "/"
@@ -204,8 +254,13 @@ def save_dir(course_name: str, rel_path: str) -> Path:
 
 
 def download_file(context: BrowserContext, item: dict) -> Optional[Path]:
-    """1ファイルを保存して保存先パスを返す。失敗時は None。更新のときは旧版を退避してから保存し直す。"""
-    api = f"{item['site']}/_api/web/GetFileByServerRelativeUrl('{quote(item['url'].replace(chr(39), chr(39) * 2), safe='/')}')/$value"
+    """1ファイルを保存して保存先パスを返す。失敗時は None。
+
+    更新のときは旧版を退避してから保存し直す。サイト上で名前変更・移動されていたら新しい名前・場所に保存する
+    （旧版は元の場所に `_旧版` として残る）。
+    """
+    path = quote(item["url"].replace("'", "''"), safe="/")  # decodedurl なら名前の % や # もそのまま扱える
+    api = f"{item['site']}/_api/web/GetFileByServerRelativePath(decodedurl='{path}')/$value"
     resp = context.request.get(api, timeout=300000)
     if not resp.ok:
         logger.error("ダウンロード失敗: %s (HTTP %s)", item["rel_path"], resp.status)
@@ -220,7 +275,8 @@ def download_file(context: BrowserContext, item: dict) -> Optional[Path]:
     old = Path(item["local_path"]) if item.get("local_path") else None
     if item["reason"] == "UPDATED" and old and old.exists():
         archive_old_version(old)
-        dest = old
+        same_place = old.parent == directory and old.name == sanitize_filename(item["name"])
+        dest = old if same_place else resolve_save_path(directory, item["name"])
     else:
         dest = resolve_save_path(directory, item["name"])
     tmp = dest.with_name(dest.name + ".part")
@@ -230,27 +286,51 @@ def download_file(context: BrowserContext, item: dict) -> Optional[Path]:
 
 
 # ---------- 1サイクル ----------
-def run_teams(context: BrowserContext, courses: List[dict], target_ids: set, summary: dict, *, dry_run: bool) -> None:
+def run_teams(context: BrowserContext, courses: List[dict], target_ids: set, summary: dict, *, dry_run: bool,
+              scheduled: bool = False) -> None:
     """全履修講義の Teams ファイルの差分を調べ、対象講義(target_ids)のものを保存する。結果は summary に足す。
 
-    summary["teams"]: 講義ごとの差分 / summary["downloads"], ["pending"], ["errors"] にも反映。
+    summary["teams"]: 講義ごとの差分 / ["teams_notices"]: 対応するチームの変更 / ["teams_skipped"]: 大きくて保存しないファイル /
+    ["teams_login_failed"], ["teams_recovered"]: ログインの失敗・復旧 / ["downloads"], ["pending"], ["errors"] にも反映。
     Teams 側の失敗で YCU-Board のチェックを止めない（エラーとして報告するだけ）。
     """
     summary["teams"] = []
+    summary["teams_notices"] = []
+    summary["teams_skipped"] = []
     delay = load_config().get("request_delay_seconds", 1.5)
     page = context.new_page()
     try:
         if not open_sharepoint(page):
-            summary["errors"].append("Teams: SharePoint にログインできませんでした")
+            _login_failed(summary, dry_run=dry_run, scheduled=scheduled)
             return
-        sites = find_team_sites(page, courses)
+        if not dry_run and load_state().get("teams_login_failed"):
+            summary["teams_recovered"] = True
+            update_state(teams_login_failed=False, teams_login_alert_sent=False)
+        previous = load_state().get("teams_sites", {})
+        sites = find_team_sites(page, courses, previous)
+        if sites and not dry_run:
+            update_state(teams_sites={**previous, **sites})
         for course in courses:
             info = sites.get(course["id"])
             if not info:
                 logger.info("%s: Teams にチームが見つかりません（対象外）", course["name"])
                 continue
             try:
-                items = list_files(page, info["site"])
+                old = previous.get(course["id"]) or {}
+                if old and old.get("site") != info["site"] and has_teams_records(course["id"]):
+                    # 別のチームのファイルを「全部削除・全部新規」と通知しないよう、記録をやり直す（予行では一時DBだけが変わる）
+                    logger.warning("%s: 対応するチームが変わりました: %s → %s", course["name"], old.get("team"), info["team"])
+                    summary["teams_notices"].append(
+                        f"{course['name']}: 対応するチームが「{old.get('team')}」から「{info['team']}」に変わりました。"
+                        "新しいチームのファイルは初回登録として記録します（違っていれば --check-teams で確認してください）。")
+                    reset_teams_course(course["id"])
+                try:
+                    items = list_files(page, info["site"])
+                except FolderMissing:
+                    if has_active_teams_files(course["id"]):
+                        raise RuntimeError("チャンネル「一般」のフォルダが見つかりません（前回はファイルがありました）")
+                    logger.info("%s [Teams]: チャンネル「一般」のフォルダがまだありません（ファイル0件）", course["name"])
+                    items = []
                 if not items and has_active_teams_files(course["id"]):
                     logger.warning("%s: Teams のファイルが0件として読み取られたため、読み直します。", course["name"])
                     time.sleep(delay)
@@ -262,7 +342,7 @@ def run_teams(context: BrowserContext, courses: List[dict], target_ids: set, sum
                             len(changes.new), len(changes.updated), len(changes.removed),
                             "（初回登録）" if changes.baseline else "")
                 if course["id"] in target_ids:
-                    _download_pending(context, course, summary, dry_run=dry_run)
+                    _download_pending(context, course, info["site"], summary, dry_run=dry_run)
                 time.sleep(delay)
             except Exception as e:  # noqa: BLE001 - 1講義の失敗で全体を止めない
                 logger.exception("Teams の確認に失敗: %s", course["name"])
@@ -274,14 +354,37 @@ def run_teams(context: BrowserContext, courses: List[dict], target_ids: set, sum
         page.close()
 
 
-def _download_pending(context: BrowserContext, course: dict, summary: dict, *, dry_run: bool) -> None:
-    pending = pending_teams_downloads(course["id"])
-    if not pending:
+def _login_failed(summary: dict, *, dry_run: bool, scheduled: bool) -> None:
+    """SharePoint にログインできなかった。結果メールに載せ、定期実行ならトースト通知も出す。
+
+    「変更があったときだけメール」の設定では、復旧するまで最初の1回だけメールのきっかけにする（pipeline 側）。
+    """
+    summary["teams_login_failed"] = True
+    summary["errors"].append(LOGIN_ERROR)
+    if dry_run:
         return
+    update_state(teams_login_failed=True)
+    if scheduled:
+        notify_teams_login_failed()
+
+
+def is_large(item: dict) -> bool:
+    return (item.get("size") or 0) > MAX_FILE_BYTES
+
+
+def _download_pending(context: BrowserContext, course: dict, site: str, summary: dict, *, dry_run: bool) -> None:
+    pending = pending_teams_downloads(course["id"])
     # 初回監査・予行の一覧表示用に、YCU-Board の資料と同じ形（course_name / material_title / file_name）にそろえる
     for p in pending:
         p["material_title"] = "/".join(["Teams", *p["rel_path"].split("/")[:-1]])
         p["file_name"] = p["rel_path"].split("/")[-1]
+    for p in pending:
+        if is_large(p):
+            logger.info("%s [Teams]: 大きいため保存しません（%.0f MB）: %s", course["name"], p["size"] / 1e6, p["rel_path"])
+            summary["teams_skipped"].append(p)
+    pending = [p for p in pending if not is_large(p)]
+    if not pending:
+        return
     if dry_run:
         summary["pending"] += pending
         return
@@ -290,8 +393,8 @@ def _download_pending(context: BrowserContext, course: dict, summary: dict, *, d
     for item in pending:
         try:
             item["name"] = item["file_name"]
-            item["url"] = _server_url(item)
-            item["site"] = _site_of(course["id"])
+            item["url"] = urlparse(site).path + "/" + LIBRARY_ROOT + "/" + item["rel_path"]
+            item["site"] = site
             path = download_file(context, item)
             if path is None:
                 summary["errors"].append(f"{course['name']} / {item['rel_path']}（Teams）: ダウンロード失敗")
@@ -306,11 +409,9 @@ def _download_pending(context: BrowserContext, course: dict, summary: dict, *, d
             summary["errors"].append(f"{course['name']} / {item['rel_path']}（Teams）: {e}")
 
 
-def _site_of(course_id: str) -> str:
-    return load_state().get("teams_sites", {})[course_id]["site"]
-
-
-def _server_url(item: dict) -> str:
-    """DB の相対パスから、サーバー上のパスを組み立てる。"""
-    site = _site_of(item["course_id"])
-    return urlparse(site).path + "/" + LIBRARY_ROOT + "/" + item["rel_path"]
+def local_date(modified: str) -> str:
+    """サイトの更新日時（UTC の ISO 形式）→ この PC の時刻での日付（YYYY-MM-DD）。"""
+    try:
+        return datetime.fromisoformat(modified.replace("Z", "+00:00")).astimezone().strftime("%Y-%m-%d")
+    except (AttributeError, ValueError):
+        return (modified or "")[:10]

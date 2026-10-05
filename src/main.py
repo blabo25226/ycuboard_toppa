@@ -18,6 +18,7 @@ from src.config import (
     AUTH_PROFILE_DIR,
     BASE_DIR,
     ID_PASSWORD_PATH,
+    OUTPUT_DIR,
     load_config,
     normalize_time,
     set_daily_run_times,
@@ -25,6 +26,7 @@ from src.config import (
     write_credentials,
 )
 from src.crawler import YCUBoardCrawler
+from src.downloader import MAX_DIR_NAME_LENGTH, sanitize_filename
 from src.pipeline import run_cycle
 from src.schedule import in_maintenance, last_due_slot, missed_slot, planned_for
 from src.state import load_state, update_state
@@ -107,10 +109,15 @@ def do_initial_sync(*, headless: bool, targets, dry_run: bool, send_mail: bool) 
         if not by_course:
             print("  保存する資料はありません（対象講義に公開済みの資料が無い、または保存済み）。")
         for name, items in by_course.items():
-            print(f"  ■ {name}: {len(items)} 件" + ("" if dry_run else f" → {Path(items[0]['path']).parent.parent}"))
+            print(f"  ■ {name}: {len(items)} 件" + ("" if dry_run else f" → {OUTPUT_DIR / sanitize_filename(name, MAX_DIR_NAME_LENGTH)}"))
             for r in items:
                 print(f"      ・{r['material_title']} / {r['file_name']}")
         print(f"\n{'保存される' if dry_run else '保存した'}資料: {len(rows)} 件")
+        skipped = summary.get("teams_skipped", [])
+        if skipped:
+            print(f"大きいため保存しない Teams のファイル: {len(skipped)} 件（必要なら Teams から直接開いてください）")
+            for r in skipped:
+                print(f"      ・{r['course_name']} / {r['rel_path']}（{r['size'] / 1e6:.0f} MB）")
     for err in summary["errors"]:
         print(f"  [エラー] {err}")
 
@@ -170,13 +177,18 @@ def do_check_teams(headless: bool) -> int:
             if not open_sharepoint(page):
                 print("Teams 確認: NG（SharePoint にログインできません。承認が必要かもしれません → python -m src.main --check-teams --headful）")
                 return 1
-            sites = find_team_sites(page, courses)
+            sites = find_team_sites(page, courses, load_state().get("teams_sites", {}))
         finally:
             context.close()
-    print("Teams 確認: OK（Teams のサイトに入れました）")
+    if sites:
+        print("Teams 確認: OK（Teams のサイトに入れました）")
+    else:
+        print("Teams 確認: NG（Teams のサイトには入れましたが、履修講義に対応するチームが1つも見つかりません）")
     for c in courses:
         info = sites.get(c["id"])
         print(f"  {c['name']}: " + (f"チーム「{info['team']}」" if info else "チームなし（Teams の対象外）"))
+    if not sites:
+        print("  チーム名に講義名がそのまま含まれていないと対応づけられません（部分一致・昨年度のチームは使いません）。")
     return 0 if sites else 1
 
 
@@ -312,6 +324,8 @@ def print_status() -> None:
         print("  初回監査          : 未実施  ← 定期チェックの前に --initial-sync で既存の資料を取得してください")
     if state.get("login_alert_sent"):
         print("  ※ ログイン失敗をお知らせ済みです。python -m src.main --login で復旧してください。")
+    if cfg["teams_enabled"] and state.get("teams_login_failed"):
+        print("  ※ 前回 Teams にログインできませんでした。python -m src.main --check-teams --headful で承認してください。")
     print()
 
 

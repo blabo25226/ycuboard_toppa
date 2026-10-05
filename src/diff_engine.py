@@ -352,11 +352,16 @@ def apply_teams_scan(course_id: str, course_name: str, items: List[dict]) -> Cha
 
         for it in items:
             prev = stored.get(it["file_id"])
+            moved = False
             if prev is None:
                 if not changes.baseline:
                     changes.new.append({**it, "reason": NEW})
             elif (prev["modified"], prev["size"]) != (it["modified"], it["size"]):
-                changes.updated.append({**it, "reason": "更新"})
+                changes.updated.append({**it, "reason": "更新", "previous_rel_path": prev["rel_path"]})
+            elif prev["rel_path"] != it["rel_path"]:
+                # 名前変更・移動（中身は同じ）。新しい名前・場所に保存し直すため、ダウンロード済みの記録を外す
+                moved = True
+                changes.updated.append({**it, "reason": "名前変更・移動", "previous_rel_path": prev["rel_path"]})
             conn.execute(
                 """
                 INSERT INTO teams_files (course_id, file_id, course_name, rel_path, modified, size)
@@ -368,6 +373,11 @@ def apply_teams_scan(course_id: str, course_name: str, items: List[dict]) -> Cha
                 """,
                 {**it, "course_id": course_id, "course_name": course_name},
             )
+            if moved:
+                conn.execute(
+                    "UPDATE teams_files SET downloaded_modified = NULL WHERE course_id = ? AND file_id = ?",
+                    (course_id, it["file_id"]),
+                )
 
         for file_id, r in stored.items():
             if file_id not in current_ids:
@@ -386,6 +396,22 @@ def has_active_teams_files(course_id: str) -> bool:
             "SELECT 1 FROM teams_files WHERE course_id = ? AND removed = 0 LIMIT 1", (course_id,)
         ).fetchone()
     return row is not None
+
+
+def has_teams_records(course_id: str) -> bool:
+    """その講義の Teams のファイルを一度でも記録したか（削除済みを含む）。"""
+    init_db()
+    with get_connection() as conn:
+        row = conn.execute("SELECT 1 FROM teams_files WHERE course_id = ? LIMIT 1", (course_id,)).fetchone()
+    return row is not None
+
+
+def reset_teams_course(course_id: str) -> None:
+    """講義に対応するチームが変わったとき、その講義の Teams の記録を消す（次の確認は初回登録になる）。ローカルのファイルは消さない。"""
+    init_db()
+    with get_connection() as conn:
+        conn.execute("DELETE FROM teams_files WHERE course_id = ?", (course_id,))
+        conn.execute("DELETE FROM scans WHERE course_id = ? AND kind = 'teams'", (course_id,))
 
 
 def pending_teams_downloads(course_id: str) -> List[dict]:

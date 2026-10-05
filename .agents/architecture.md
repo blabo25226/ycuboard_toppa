@@ -23,10 +23,10 @@
 
 ## Teams（SharePoint）の構造（2026年10月時点で確認）
 - チームの実体は `https://yokohamacu.sharepoint.com/sites/<サイト>`。チャンネル「一般」の「共有済み」＝ `Shared Documents/General`。Teams の画面（`teams.cloud.microsoft`）は重く、サイトの表示まで数十秒〜2分かかるので使わない。
-- サイトの特定: SharePoint の検索 API（`/_api/search/query?querytext='contentclass:STS_Site'`）で、権限のあるサイトの名前(Title)とURL(Path)が一覧で取れる。講義名（`normalize_course_name`）がチーム名に含まれるものを対応づけ、複数あれば「`_` 区切りで完全一致 → R8/2026 を含む → 短い名前」の順に選ぶ。結果は `data/state.json` の `teams_sites` に控える（検索が失敗したときの予備）。
-- 一覧とダウンロード: ログイン済みブラウザから REST API（`GetFolderByServerRelativeUrl(...)?$expand=Folders,Files`、`GetFileByServerRelativeUrl(...)/$value`）を直接呼ぶ。ファイルのキーは `UniqueId`、更新判定は `TimeLastModified` と `Length`。ダウンロードはサイズ照合のうえ `.part` に書いてから置き換える。
+- サイトの特定: SharePoint の検索 API（`/_api/search/query?querytext='contentclass:STS_Site'`）で、権限のあるサイトの名前(Title)とURL(Path)が一覧で取れる。この一覧には参加していない**公開チーム**や昨年度のチームも含まれるので、`teams.course_matches_team`（区切りで分けた一部が年度表記を除いて講義名と完全一致）と年度の判定（`_years` / `current_school_year`）で絞る。前回のチームが候補にあれば使い続ける（勝手に切り替えない）。`find_team_sites` は保存せず、`run_teams` が予行以外のときに `data/state.json` の `teams_sites` に控える（検索が失敗したときの予備・前回のチームの判定に使う）。チームが変わったら `diff_engine.reset_teams_course` で記録をやり直す。
+- 一覧とダウンロード: ログイン済みブラウザから REST API（`GetFolderByServerRelativePath(decodedurl=...)?$expand=Folders,Files`、`GetFileByServerRelativePath(decodedurl=...)/$value`）を直接呼ぶ。`decodedurl` 版は名前の `%`・`#` も扱える（`...ByServerRelativeUrl` は扱えない）。`General` 自体の 404 は `FolderMissing`（フォルダ未作成）。ファイルのキーは `UniqueId`、更新判定は `TimeLastModified` と `Length`、名前変更・移動は `rel_path` の変化。ダウンロードはサイズ照合のうえ `.part` に書いてから置き換える。`MAX_FILE_BYTES`（200 MB）超は保存しない（全体をメモリに読むため）。
 - 録画は `Recordings` フォルダ（除外）。`*.loop` も除外。
-- ログイン: SharePoint を開き、Microsoft のサインイン画面を `teams.open_sharepoint` が通す（アカウント選択 → メール → パスワード1回 → 承認待ち → 維持）。YCU-Board と同じ `data/auth_profile` を使うので、通常は承認不要。新しいサインイン画面は「次へ」ボタンのクリックでは進まず、Enter で送る必要があった。メール欄はパスワード画面でも DOM に残るので、画面の文言で段階を判定する。
+- ログイン: SharePoint を開き、Microsoft のサインイン画面を `teams.open_sharepoint` が通す（アカウント選択 → メール → パスワード1回 → 承認待ち → 維持）。YCU-Board と同じ `data/auth_profile` を使うので、通常は承認不要。新しいサインイン画面は「次へ」ボタンのクリックでは進まず、Enter で送る必要があった。メール欄はパスワード画面でも DOM に残るので、画面の文言で段階を判定する。入れなかったときは `teams._login_failed`（`summary["teams_login_failed"]`、state の `teams_login_failed`、定期実行ならトースト）。メールを出すかの判定は `pipeline` 側で、お知らせ済み（`teams_login_alert_sent`）ならこのエラーを数えない。
 - 差分は `diff_engine.apply_teams_scan`（`teams_files` テーブル。講義の初回は `scans` の `kind='teams'` で判断）。
 
 ## 実装上の注意

@@ -45,6 +45,8 @@ def coursework_lines(summary: dict) -> List[str]:
 
 def build_report(summary: dict) -> tuple:
     """巡回結果(summary)から (件名, 本文) を作る。"""
+    from src.teams import local_date
+
     lines: List[str] = []
     n_new = sum(len(c["changes"].new) for c in summary["courses"])
     n_upd = sum(len(c["changes"].updated) for c in summary["courses"])
@@ -53,6 +55,15 @@ def build_report(summary: dict) -> tuple:
 
     if summary.get("recovered"):
         lines.append("※ ログインできない状態でしたが、復旧しました。")
+    if summary.get("teams_recovered"):
+        lines.append("※ Teams にログインできない状態でしたが、復旧しました。")
+    if summary.get("teams_login_failed"):
+        lines += [
+            "※ Teams（SharePoint）に自動ログインできなかったため、Teams の講義資料は確認していません（YCU-Board は確認済み）。",
+            "   考えられる原因: Microsoft のサインインに Authenticator での承認が必要 / パスワードの変更（id_password.txt を更新）",
+            "   対処: PC で `python -m src.main --check-teams --headful` を実行し、画面の指示に従って承認してください。",
+            "   （復旧するまで結果メールに載ります。「更新があったときだけ送る」設定では、このためだけのメールは1回だけ送ります）",
+        ]
     lines.append(f"実行時刻: {summary['started']:%Y-%m-%d %H:%M}")
     n_cw = len(coursework_lines(summary))
     lines.append(f"チェックした講義: {len(summary['courses'])} 件 / 新規資料 {n_new} 件 / 更新 {n_upd} 件 / テスト・課題の更新 {n_cw} 件")
@@ -81,9 +92,14 @@ def build_report(summary: dict) -> tuple:
             lines.append(f"■ {t['name']}（Teams）: 初回登録（ファイル {t['count']} 件を記録。次回から差分を通知）")
             continue
         lines.append(f"■ {t['name']}（Teams）")
-        lines += [f"  + 新規: {i['rel_path']} ({i['modified'][:10]})" for i in ch.new]
-        lines += [f"  * 更新: {i['rel_path']} ({i['modified'][:10]})" for i in ch.updated]
+        lines += [f"  + 新規: {i['rel_path']} ({local_date(i['modified'])}){_large_note(i)}" for i in ch.new]
+        for i in ch.updated:
+            moved = f"（← {i['previous_rel_path']}）" if i.get("previous_rel_path", i["rel_path"]) != i["rel_path"] else ""
+            lines.append(f"  * {i['reason']}: {i['rel_path']}{moved} ({local_date(i['modified'])}){_large_note(i)}")
         lines += [f"  - 削除: {i['rel_path']}" for i in ch.removed]
+    notices = summary.get("teams_notices", [])
+    if notices:
+        lines += ["【Teams のお知らせ】"] + [f"  {n}" for n in notices] + [""]
     cw_lines = coursework_lines(summary)
     if not any(c["changes"].changed or c["changes"].baseline for c in summary["courses"]) and not cw_lines and not team_changed:
         lines.append("更新はありませんでした。")
@@ -103,6 +119,12 @@ def build_report(summary: dict) -> tuple:
     if errors:
         flag += "・エラーあり"
     return f"[YCU-Board] {flag} ({summary['started']:%m/%d %H:%M})", "\n".join(lines)
+
+
+def _large_note(item: dict) -> str:
+    from src.teams import MAX_FILE_BYTES, is_large
+
+    return f"（{item['size'] / 1e6:.0f} MB。{MAX_FILE_BYTES // 2**20} MB を超えるため保存しません）" if is_large(item) else ""
 
 
 def build_login_alert() -> tuple:
