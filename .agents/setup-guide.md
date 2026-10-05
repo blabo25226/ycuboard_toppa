@@ -1,13 +1,15 @@
 # 利用者のセットアップを手伝う
 
-セットアップと運用は3つのスキルで進める。**本体は `skills/` にある。** 利用者に「セットアップして」「設定したい」と頼まれたら、該当するスキルを読んで、その手順どおりに進める。
+セットアップと運用は4つのスキルで進める。**本体は `skills/` にある。** 利用者に「セットアップして」「設定したい」と頼まれたら、該当するスキルを読んで、その手順どおりに進める。
 
 | スキル | 内容 | ファイル |
 |---|---|---|
 | `/ycu-setup` | 環境設定: Python・依存、ID/パスワード、ログイン（初回/2回目）、メール、履修講義の確認 | [skills/ycu-setup/SKILL.md](skills/ycu-setup/SKILL.md) |
+| `/ycu-now` | 今すぐ監査: 教材・テスト・課題の更新チェックを1回実行し、結果を伝える（`--now`） | [skills/ycu-now/SKILL.md](skills/ycu-now/SKILL.md) |
 | `/ycu-resume` | 復旧: 止まった定期監査の診断、ログイン復旧、常駐の起動、取りこぼしの補完 | [skills/ycu-resume/SKILL.md](skills/ycu-resume/SKILL.md) |
 | `/ycu-config` | 利用設定: 定期監査の ON/OFF と回数・時刻、講義ごとの自動ダウンロード、結果メール | [skills/ycu-config/SKILL.md](skills/ycu-config/SKILL.md) |
 
+- 今すぐ更新を確認したい（「更新ある？」「監査して」）→ `/ycu-now`。
 - 定期監査が止まった／動いていない → `/ycu-resume`（診断 → ログイン復旧・常駐の起動・取りこぼしの補完）。
 - 初めて使う利用者 → `/ycu-setup`（最後に `/ycu-config` へ続く）。
 - 設定だけ変えたい → `/ycu-config`。
