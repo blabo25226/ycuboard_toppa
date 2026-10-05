@@ -35,3 +35,15 @@ def missed_slot(last_run_iso: Optional[str], times: List[str], now: Optional[dat
     except ValueError:
         return None
     return due if last_run < due else None
+
+
+def next_slot(times: List[str], now: Optional[datetime] = None) -> Optional[datetime]:
+    """これから最初に来る巡回予定時刻（今日・明日から探す）。"""
+    now = now or datetime.now()
+    slots = []
+    for day in (now.date(), now.date() + timedelta(days=1)):
+        for hm in times:
+            slot = datetime.combine(day, datetime.strptime(hm, "%H:%M").time())
+            if slot > now:
+                slots.append(slot)
+    return min(slots) if slots else None
