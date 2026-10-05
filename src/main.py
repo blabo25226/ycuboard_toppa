@@ -294,4 +294,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (FileNotFoundError, ValueError) as e:  # 認証情報ファイルの不備など、利用者が直せるもの
+        print(f"[エラー] {e}")
+        sys.exit(1)
