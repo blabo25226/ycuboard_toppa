@@ -154,6 +154,32 @@ def do_check_login() -> int:
     return 1
 
 
+def do_check_teams(headless: bool) -> int:
+    """保存済みセッションで Teams（SharePoint）に入れるか、履修講義のチームが見つかるかを確認する。"""
+    from src.auth import ensure_logged_in
+    from src.teams import find_team_sites, open_sharepoint
+
+    with sync_playwright() as p:
+        context = open_context(p, headless)
+        try:
+            page = context.pages[0] if context.pages else context.new_page()
+            if not ensure_logged_in(page, timeout_seconds=60):
+                print("Teams 確認: NG（先に YCU-Board にログインできません → python -m src.main --login）")
+                return 1
+            courses = YCUBoardCrawler(page).get_enrolled_courses()
+            if not open_sharepoint(page):
+                print("Teams 確認: NG（SharePoint にログインできません。承認が必要かもしれません → python -m src.main --check-teams --headful）")
+                return 1
+            sites = find_team_sites(page, courses)
+        finally:
+            context.close()
+    print("Teams 確認: OK（Teams のサイトに入れました）")
+    for c in courses:
+        info = sites.get(c["id"])
+        print(f"  {c['name']}: " + (f"チーム「{info['team']}」" if info else "チームなし（Teams の対象外）"))
+    return 0 if sites else 1
+
+
 def do_test_mail() -> int:
     """自分宛にテストメールを1通送る。"""
     from src.mailer import send_email
@@ -357,6 +383,7 @@ def build_parser() -> argparse.ArgumentParser:
     setup.add_argument("--uninstall-task", action="store_true", help="自動起動の登録を解除")
     setup.add_argument("--doctor", action="store_true", help="環境（Python・Playwright・認証情報など）を診断")
     setup.add_argument("--check-login", action="store_true", help="保存済みセッションで自動ログインできるか確認")
+    setup.add_argument("--check-teams", action="store_true", help="Teams（SharePoint）に入れるか、履修講義のチームが見つかるか確認")
     setup.add_argument("--test-mail", action="store_true", help="自分宛にテストメールを送信")
 
     run = p.add_argument_group("実行")
@@ -461,6 +488,8 @@ def main() -> None:
         sys.exit(run_doctor())
     elif args.check_login:
         sys.exit(do_check_login())
+    elif args.check_teams:
+        sys.exit(do_check_teams(headless))
     elif args.test_mail:
         sys.exit(do_test_mail())
     elif args.init:
