@@ -1,8 +1,6 @@
 """YCU-Board 資料チェック＆自動ダウンロードの CLI。 `python -m src.main --help` 参照。"""
 import argparse
-import base64
 import logging
-import subprocess
 import sys
 import time
 from datetime import datetime, timedelta
@@ -21,7 +19,6 @@ from src.config import (
     BASE_DIR,
     ID_PASSWORD_PATH,
     load_config,
-    is_in_maintenance,
     normalize_time,
     set_daily_run_times,
     update_config,
@@ -29,6 +26,9 @@ from src.config import (
 )
 from src.crawler import YCUBoardCrawler
 from src.pipeline import run_cycle
+from src.schedule import in_maintenance, last_due_slot, missed_slot
+from src.state import load_state
+from src.winutil import find_watchers, powershell, start_watcher, stop_watchers
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s %(message)s", datefmt="%H:%M:%S")
 logger = logging.getLogger("YCUBoard")
@@ -189,11 +189,26 @@ def do_init() -> None:
     print(f"{ID_PASSWORD_PATH.name} を作成しました。次は: python -m src.main --login")
 
 
-def _powershell(script: str) -> subprocess.CompletedProcess:
-    # 日本語パスが文字化けしないよう UTF-16LE の Base64 で渡す
-    script = "$ProgressPreference = 'SilentlyContinue'\n" + script
-    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
-    return subprocess.run(["powershell", "-NoProfile", "-EncodedCommand", encoded], capture_output=True, text=True, errors="replace")
+_powershell = powershell
+
+
+def do_start() -> int:
+    """停止している常駐（定期監査）を起動する。"""
+    pids = find_watchers()
+    if pids:
+        print(f"すでに動いています（PID: {', '.join(map(str, pids))}）。")
+        return 0
+    print(start_watcher())
+    time.sleep(4)
+    pids = find_watchers()
+    print(f"起動を確認しました（PID: {', '.join(map(str, pids))}）。" if pids else "起動を確認できませんでした。logs/ycuboard.log を確認してください。")
+    return 0 if pids else 1
+
+
+def do_stop() -> int:
+    n = stop_watchers()
+    print(f"常駐プロセスを {n} 件停止しました。" if n else "動いている常駐プロセスはありません。")
+    return 0
 
 
 def install_task() -> None:
@@ -257,10 +272,24 @@ def print_status() -> None:
 
 def watch(headless: bool) -> None:
     """設定した時刻に巡回する常駐ループ。設定は毎回読み直す（ON/OFFや時刻の変更が即反映される）。"""
+    others = find_watchers()
+    if others:
+        print(f"すでに常駐が動いています（PID: {', '.join(map(str, others))}）。二重起動を避けるため終了します。")
+        return
     logger.info("定期監視を開始します（Ctrl+C で終了）")
     print_status()
     done = set()  # (日付, 時刻) 実行済みスロット
     started = datetime.now()
+
+    # PC を閉じていた・常駐が止まっていたなどで直近の予定を取りこぼしていたら、起動直後に1回補う
+    cfg = load_config()
+    missed = missed_slot(load_state().get("last_run"), cfg["daily_run_times"]) if cfg["check_enabled"] else None
+    if missed:
+        logger.info("取りこぼしを検出（予定 %s）。今すぐ1回実行して補います。", missed.strftime("%m/%d %H:%M"))
+        try:
+            run_once(headless=headless, download=cfg["download_enabled"], scheduled=True)
+        except Exception:  # noqa: BLE001
+            logger.exception("取りこぼしの補完に失敗しました")
 
     while True:
         now = datetime.now()
@@ -276,7 +305,7 @@ def watch(headless: bool) -> None:
                 done.add(key)
                 if late > timedelta(minutes=CATCH_UP_MINUTES):
                     continue
-                if is_in_maintenance():
+                if in_maintenance(now):
                     logger.warning("メンテナンス時間帯のため %s の巡回をスキップします。", hm)
                     continue
                 logger.info("定期巡回を開始します (%s)", hm)
@@ -303,6 +332,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--dry-run", action="store_true", help="--initial-sync と併用: 保存せず、保存される資料の一覧だけ表示")
     run.add_argument("--once", action="store_true", help="今すぐ1回チェックする（ON/OFF設定に関係なく実行）")
     run.add_argument("--watch", action="store_true", help="設定した時刻に自動チェックする常駐モード")
+    run.add_argument("--start", action="store_true", help="停止している常駐（定期監査）を起動する")
+    run.add_argument("--stop", action="store_true", help="動いている常駐を停止する")
+    run.add_argument("--health", action="store_true", help="定期監査が正常に動いているか診断（停止・取りこぼしの検出）")
     run.add_argument("--list-courses", action="store_true", help="履修中の講義を一覧表示")
     run.add_argument("--status", action="store_true", help="現在の設定を表示")
     run.add_argument("--with-download", action="store_true", help="--once と併用: 対象講義の資料も保存する")
@@ -395,6 +427,14 @@ def main() -> None:
         do_login()
     elif args.list_courses:
         do_list_courses(headless)
+    elif args.health:
+        from src.health import run_health
+
+        sys.exit(run_health())
+    elif args.start:
+        sys.exit(do_start())
+    elif args.stop:
+        sys.exit(do_stop())
     elif args.initial_sync:
         sys.exit(do_initial_sync(headless=headless, targets=args.course, dry_run=args.dry_run, send_mail=not args.no_mail))
     elif args.once:
