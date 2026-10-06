@@ -17,6 +17,7 @@ DEFAULT_CONFIG: dict = {
     "teams_enabled": False,  # 5. Teams（SharePoint）の講義資料も確認・ダウンロードする（ダウンロードは3.に従う）
     "drive_enabled": False,  # 6. 保存した資料を drive_dir（Google Drive の同期フォルダなど）にも複製する
     "drive_dir": "",  # 複製先フォルダ（絶対パス）。--set-drive-dir で設定
+    "drive_course_subdir": "",  # 空でなければ、複製先の <講義名>/<この名前>/ の下に入れる（例: toppa）。--set-cloud-subdir で設定
     "email_enabled": True,  # 4. 結果メール
     "email_only_on_change": False,  # True なら、更新・保存・エラーがあったときだけ送る
     # 1日の巡回時刻（HH:MM）。回数も時刻も自由に増減できる。

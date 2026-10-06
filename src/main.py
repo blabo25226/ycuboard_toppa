@@ -452,6 +452,7 @@ def build_parser() -> argparse.ArgumentParser:
     st.add_argument("--set-courses", nargs="*", metavar="講義名", help="ダウンロード対象の講義（指定なしで全講義）")
     st.add_argument("--set-output", metavar="フォルダ", help="資料の保存先フォルダ")
     st.add_argument("--set-drive-dir", "--set-cloud-dir", dest="set_drive_dir", metavar="フォルダ", help="複製先フォルダ（絶対パス。例: H:\\マイドライブ\\YCU-Board）")
+    st.add_argument("--set-cloud-subdir", dest="set_cloud_subdir", metavar="名前", help="複製先の <講義名>/<名前>/ の下に入れる（例: toppa。空文字で解除）")
     st.add_argument("--set-mail-to", metavar="アドレス", help="結果メールの宛先")
     return p
 
@@ -475,6 +476,11 @@ def apply_settings(args) -> bool:
         from src.drive import validate_drive_dir
 
         changes["drive_dir"] = validate_drive_dir(args.set_drive_dir)
+    if args.set_cloud_subdir is not None:
+        sub = args.set_cloud_subdir.strip()
+        if sub and (any(c in sub for c in '\\/:*?"<>|') or sub in (".", "..")):
+            raise ValueError(f"フォルダ名に使えない文字が含まれています: {sub!r}")
+        changes["drive_course_subdir"] = sub
     if args.drive_on:
         if not (changes.get("drive_dir") or load_config()["drive_dir"]):
             raise ValueError("先に複製先を指定してください: --set-cloud-dir フォルダ")

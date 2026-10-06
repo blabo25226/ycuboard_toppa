@@ -29,7 +29,7 @@ def mirror_to_drive(summary: dict) -> None:
         for src in sorted(OUTPUT_DIR.rglob("*")):
             if not src.is_file() or src.suffix == ".part":
                 continue
-            dest = dest_root / src.relative_to(OUTPUT_DIR)
+            dest = _dest_path(dest_root, src.relative_to(OUTPUT_DIR), cfg["drive_course_subdir"])
             if dest.exists() and _same(src, dest):
                 continue
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -41,6 +41,13 @@ def mirror_to_drive(summary: dict) -> None:
     except Exception as e:  # noqa: BLE001 - Drive 側の不具合で巡回を止めない
         logger.error("Google Drive へのコピーに失敗しました: %s", e)
         summary["errors"].append(f"Google Drive へのコピー: {(str(e).splitlines() or [type(e).__name__])[0][:200]}")
+
+
+def _dest_path(dest_root: Path, rel: Path, subdir: str) -> Path:
+    """subdir があれば <講義名>/<subdir>/<以降> にする（講義フォルダの外のファイルはそのまま）。"""
+    if not subdir or len(rel.parts) < 2:
+        return dest_root / rel
+    return dest_root / rel.parts[0] / subdir / Path(*rel.parts[1:])
 
 
 def _destination(drive_dir: str) -> Path:
