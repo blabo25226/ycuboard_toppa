@@ -6,7 +6,6 @@ output/ を基準とし、同じフォルダ構成のまま、無い・サイズ
 import logging
 import shutil
 from pathlib import Path
-from typing import Optional
 
 from src.config import OUTPUT_DIR, load_config
 
@@ -58,7 +57,7 @@ def validate_drive_dir(value: str) -> str:
     """--set-drive-dir の検証。絶対パスで、ドライブ（またはネットワーク）が存在し、output/ の中ではないこと。"""
     path = Path(value).expanduser()
     if not path.is_absolute():
-        raise ValueError(f"コピー先は絶対パスで指定してください: {value!r}（例: H:\マイドライブ\YCU-Board）")
+        raise ValueError(f"コピー先は絶対パスで指定してください: {value!r}（例: H:\\マイドライブ\\YCU-Board）")
     if not Path(path.anchor).exists():
         raise ValueError(f"ドライブが見つかりません: {path.anchor}")
     resolved = path.resolve()
