@@ -38,6 +38,7 @@ python -m src.main --status
 |---|---|---|
 | 更新メールが来ない | `--health` のメール設定。迷惑メール・「その他」タブ。テスト・課題の更新もこのメールで届く | 「更新があったときだけ」だと、更新が無ければ来ない。毎回なら `--mail-always`。メール OFF なら `--mail-on` |
 | 資料が保存されない | 自動ダウンロード ON/OFF、保存対象の講義（`--status`）、`output/` | その講義が保存対象か、そもそも新しい資料が出ていないか。対象を変えるなら `/ycu-config` |
+| Drive に資料が増えない | `--status` の「Drive へも複製」と複製先、メールの「Google Drive へのコピー」、Google Drive for Desktop の起動 | OFF なら `--drive-on`。複製先が未設定なら `--set-drive-dir`。エラーは次回の巡回で自動で補われる |
 | Teams の資料が保存されない | `--status` の「Teams の資料」が ON か。メールの「Teams:」欄、`logs/ycuboard.log` の `[Teams]` | OFF なら `--teams-on`（`/ycu-config`）。`--status` に「Teams にログインできませんでした」と出ていれば `--check-teams --headful` で承認してもらう。講義のチームが無い（名前が講義名と一致しないチーム・昨年度のチームは使わない。`--check-teams` で対応を確認）／`Recordings` や `*.loop`・200 MB 超は対象外。常駐が古いコードのままのときは `--stop` → `--start` |
 | 次の確認がまだ | 「次の予定」の時刻 | 予定時刻になるまで動かないのが正常 |
 | 更新があるはずなのに検出されない | 大学の画面で実際に資料が更新されているか。`--once --no-mail` を1回実行して結果を見る | 登録日が変わらない差し替えは検出できないことがある。手動で `--once` を実行して確かめる |

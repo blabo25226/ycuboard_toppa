@@ -10,6 +10,7 @@
 | `src/diff_engine.py` | SQLite(`materials`)で差分判定とダウンロード要否の判定 |
 | `src/downloader.py` | 保存先パスの決定、ファイル名のサニタイズ、旧版の退避 |
 | `src/teams.py` | Teams（SharePoint）: サイトの特定・ファイル一覧・ダウンロード・Teams 分の1サイクル(`run_teams`) |
+| `src/drive.py` | `output/` を別フォルダ（Google Drive の同期フォルダなど）へ複製（`mirror_to_drive`、サイクルの最後に `pipeline` が呼ぶ） |
 | `src/mailer.py` | 結果メール(Outlook on the web / SMTP) |
 | `src/notifier.py` | Windows トースト通知 |
 | `src/config.py` | `config.json` の読み書き、認証情報の読み取り、メンテナンス判定 |
