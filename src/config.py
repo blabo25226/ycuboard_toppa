@@ -8,6 +8,7 @@ from typing import List, Optional, Tuple
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 CONFIG_FILE = BASE_DIR / "config.json"
+DRIVE_DIR_FILE = BASE_DIR / "drive_dir.txt"  # クラウド複製先のパス（個人情報。git 管理外）
 
 # 初期値（config.json に無い項目はここが使われる）
 DEFAULT_CONFIG: dict = {
@@ -16,7 +17,7 @@ DEFAULT_CONFIG: dict = {
     "download_enabled": False,  # 3. 更新があった資料の自動ダウンロード
     "teams_enabled": False,  # 5. Teams（SharePoint）の講義資料も確認・ダウンロードする（ダウンロードは3.に従う）
     "drive_enabled": False,  # 6. 保存した資料を drive_dir（Google Drive の同期フォルダなど）にも複製する
-    "drive_dir": "",  # 複製先フォルダ（絶対パス）。--set-drive-dir で設定
+    "drive_dir": "",  # 複製先フォルダ（絶対パス）。--set-drive-dir で設定。値は config.json ではなく drive_dir.txt に保存する
     "drive_course_subdir": "",  # 空でなければ、複製先の <講義名>/<この名前>/ の下に入れる（例: toppa）。--set-cloud-subdir で設定
     "email_enabled": True,  # 4. 結果メール
     "email_only_on_change": False,  # True なら、更新・保存・エラーがあったときだけ送る
@@ -68,7 +69,18 @@ def load_config() -> dict:
             else:
                 cfg[key] = value
         cfg.pop("automation_enabled", None)
+    from_file = _read_drive_dir()
+    if from_file:
+        cfg["drive_dir"] = from_file
     return cfg
+
+
+def _read_drive_dir() -> str:
+    try:
+        lines = DRIVE_DIR_FILE.read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        return ""
+    return next((ln.strip() for ln in lines if ln.strip() and not ln.lstrip().startswith("#")), "")
 
 
 def config_error() -> Optional[str]:
@@ -86,6 +98,11 @@ def config_error() -> Optional[str]:
 
 
 def save_config(cfg: dict) -> None:
+    # 複製先のパスは config.json に書かず drive_dir.txt に分ける（旧 config.json の値はここで移行される）
+    cfg = dict(cfg)
+    drive_dir = cfg.pop("drive_dir", "") or ""
+    if drive_dir != _read_drive_dir():
+        write_atomic(DRIVE_DIR_FILE, drive_dir + "\n" if drive_dir else "")
     write_atomic(CONFIG_FILE, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
 
 

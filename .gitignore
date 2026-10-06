@@ -2,6 +2,7 @@
 id_password*
 smtp_password*
 config.json
+drive_dir.txt
 config*.json.bak
 output/
 data/
