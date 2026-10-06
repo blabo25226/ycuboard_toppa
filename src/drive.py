@@ -45,7 +45,7 @@ def mirror_to_drive(summary: dict) -> None:
 
 def _destination(drive_dir: str) -> Path:
     if not drive_dir:
-        raise RuntimeError("コピー先が未設定です（--set-drive-dir フォルダ）")
+        raise RuntimeError("コピー先が未設定です（--set-cloud-dir フォルダ）")
     path = Path(drive_dir)
     if not Path(path.anchor).exists():
         raise RuntimeError(f"ドライブに接続できません: {path.anchor}（Google Drive for Desktop が起動しているか確認してください）")
@@ -64,3 +64,25 @@ def validate_drive_dir(value: str) -> str:
     if resolved == OUTPUT_DIR.resolve() or OUTPUT_DIR.resolve() in resolved.parents:
         raise ValueError("コピー先を保存先（output/）の中にはできません。")
     return str(path)
+
+
+def list_drives() -> list:
+    """PC につながっているドライブ（Google Drive for Desktop などの同期ドライブを含む）→ [(ドライブ, 説明)]。"""
+    from src.winutil import powershell
+
+    script = "Get-PSDrive -PSProvider FileSystem | ForEach-Object { $_.Root + '|' + $_.Description }"
+    out = powershell(script, timeout=30).stdout.splitlines()
+    return [tuple((line.split("|", 1) + [""])[:2]) for line in out if "|" in line]
+
+
+def test_destination(drive_dir: str) -> str:
+    """複製先に小さなテストファイルを書いて読み戻し、後始末する。問題なければ空文字、あれば理由を返す。"""
+    try:
+        root = _destination(drive_dir)
+        probe = root / "_ycu_cloud_test.txt"
+        probe.write_text("ycuboard cloud test", encoding="utf-8")
+        ok = probe.read_text(encoding="utf-8") == "ycuboard cloud test"
+        probe.unlink()
+        return "" if ok else "書き込んだ内容を読み戻せませんでした"
+    except Exception as e:  # noqa: BLE001
+        return (str(e).splitlines() or [type(e).__name__])[0]
