@@ -301,6 +301,7 @@ def print_status() -> None:
     print(f"  定期チェック      : {onoff(cfg['check_enabled'])}   (--check-on / --check-off)")
     print(f"  自動ダウンロード  : {onoff(cfg['download_enabled'])}   (--download-on / --download-off)")
     print(f"  Teams の資料      : {onoff(cfg['teams_enabled'])}   (--teams-on / --teams-off)  ダウンロードは「自動ダウンロード」と対象講義に従う")
+    print(f"  Drive へも複製    : {onoff(cfg['drive_enabled'])}   (--drive-on / --drive-off)  複製先: {cfg['drive_dir'] or '(未設定: --set-drive-dir)'}")
     when = "更新があったときだけ" if cfg["email_only_on_change"] else "毎回"
     print(f"  結果メール        : {onoff(cfg['email_enabled'])}   (--mail-on / --mail-off)  宛先: {mail} / {when} (--mail-changes-only / --mail-always)")
     print(f"  巡回時刻          : {', '.join(cfg['daily_run_times'])}  (1日{len(cfg['daily_run_times'])}回, --set-times)")
@@ -424,6 +425,8 @@ def build_parser() -> argparse.ArgumentParser:
     sw.add_argument("--download-off", action="store_true")
     sw.add_argument("--teams-on", action="store_true", help="Teams（SharePoint）の講義資料も確認・ダウンロードする")
     sw.add_argument("--teams-off", action="store_true", help="Teams の確認をやめる")
+    sw.add_argument("--drive-on", action="store_true", help="保存した資料を --set-drive-dir のフォルダ（Google Drive など）にも複製する")
+    sw.add_argument("--drive-off", action="store_true", help="複製をやめる")
     sw.add_argument("--mail-on", action="store_true")
     sw.add_argument("--mail-off", action="store_true")
     sw.add_argument("--mail-changes-only", action="store_true", help="更新・保存・エラーがあったときだけメールする")
@@ -437,6 +440,7 @@ def build_parser() -> argparse.ArgumentParser:
     st.add_argument("--set-times", nargs="+", metavar="HH:MM", help="巡回時刻（例: --set-times 11:00 17:00 21:30）")
     st.add_argument("--set-courses", nargs="*", metavar="講義名", help="ダウンロード対象の講義（指定なしで全講義）")
     st.add_argument("--set-output", metavar="フォルダ", help="資料の保存先フォルダ")
+    st.add_argument("--set-drive-dir", metavar="フォルダ", help="複製先フォルダ（絶対パス。例: H:\マイドライブ\YCU-Board）")
     st.add_argument("--set-mail-to", metavar="アドレス", help="結果メールの宛先")
     return p
 
@@ -456,6 +460,16 @@ def apply_settings(args) -> bool:
         changes["teams_enabled"] = True
     if args.teams_off:
         changes["teams_enabled"] = False
+    if args.set_drive_dir:
+        from src.drive import validate_drive_dir
+
+        changes["drive_dir"] = validate_drive_dir(args.set_drive_dir)
+    if args.drive_on:
+        if not (changes.get("drive_dir") or load_config()["drive_dir"]):
+            raise ValueError("先に複製先を指定してください: --set-drive-dir フォルダ")
+        changes["drive_enabled"] = True
+    if args.drive_off:
+        changes["drive_enabled"] = False
     if args.mail_on:
         changes["email_enabled"] = True
     if args.mail_off:

@@ -15,6 +15,8 @@ DEFAULT_CONFIG: dict = {
     "check_enabled": False,  # 2. 定期チェック
     "download_enabled": False,  # 3. 更新があった資料の自動ダウンロード
     "teams_enabled": False,  # 5. Teams（SharePoint）の講義資料も確認・ダウンロードする（ダウンロードは3.に従う）
+    "drive_enabled": False,  # 6. 保存した資料を drive_dir（Google Drive の同期フォルダなど）にも複製する
+    "drive_dir": "",  # 複製先フォルダ（絶対パス）。--set-drive-dir で設定
     "email_enabled": True,  # 4. 結果メール
     "email_only_on_change": False,  # True なら、更新・保存・エラーがあったときだけ送る
     # 1日の巡回時刻（HH:MM）。回数も時刻も自由に増減できる。

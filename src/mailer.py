@@ -100,6 +100,10 @@ def build_report(summary: dict) -> tuple:
     notices = summary.get("teams_notices", [])
     if notices:
         lines += ["【Teams のお知らせ】"] + [f"  {n}" for n in notices] + [""]
+    drive = summary.get("drive")
+    if drive:
+        lines.append(f"Google Drive へのコピー: {drive['copied']} 件 ({drive['dir']})")
+        lines.append("")
     cw_lines = coursework_lines(summary)
     if not any(c["changes"].changed or c["changes"].baseline for c in summary["courses"]) and not cw_lines and not team_changed:
         lines.append("更新はありませんでした。")

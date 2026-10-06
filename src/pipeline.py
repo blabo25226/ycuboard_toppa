@@ -24,6 +24,7 @@ from src.mailer import build_login_alert
 from src.notifier import notify_login_failed, notify_new_material, notify_run_failed
 from src.state import load_state, now_iso, update_state
 from src.teams import LOGIN_ERROR as TEAMS_LOGIN_ERROR
+from src.drive import mirror_to_drive
 from src.teams import run_teams
 
 logger = logging.getLogger(__name__)
@@ -148,6 +149,7 @@ def _run_cycle(context, *, download, targets, send_mail, scheduled, initial, dry
 
     if dry_run:
         return summary
+    mirror_to_drive(summary)  # 保存先を複製（Drive が OFF なら何もしない）
     update_state(
         last_run=now_iso(),
         last_result="ok" if not summary["errors"] else "error",
