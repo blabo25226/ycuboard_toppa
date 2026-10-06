@@ -1,18 +1,20 @@
 # 利用者のセットアップを手伝う
 
-セットアップと運用は4つのスキルで進める。**本体は `skills/` にある。** 利用者に「セットアップして」「設定したい」と頼まれたら、該当するスキルを読んで、その手順どおりに進める。
+セットアップと運用は5つのスキルで進める。**本体は `skills/` にある。** 利用者に「セットアップして」「設定したい」と頼まれたら、該当するスキルを読んで、その手順どおりに進める。
 
 | スキル | 内容 | ファイル |
 |---|---|---|
 | `/ycu-setup` | 環境設定: Python・依存、ID/パスワード、ログイン（初回/2回目）、メール、履修講義の確認 | [skills/ycu-setup/SKILL.md](skills/ycu-setup/SKILL.md) |
 | `/ycu-now` | 今すぐ監査: 教材・テスト・課題の更新チェックを1回実行し、結果を伝える（`--now`） | [skills/ycu-now/SKILL.md](skills/ycu-now/SKILL.md) |
 | `/ycu-resume` | 復旧: 止まった定期監査の診断、ログイン復旧、常駐の起動、取りこぼしの補完 | [skills/ycu-resume/SKILL.md](skills/ycu-resume/SKILL.md) |
+| `/ycu-cloud` | クラウド保存: PC につないだ Google Drive などの指定フォルダにも、監査のたびに複製する設定（ON/OFF・複製先・書き込みテスト） | [skills/ycu-cloud/SKILL.md](skills/ycu-cloud/SKILL.md) |
 | `/ycu-config` | 利用設定: 定期監査の ON/OFF と回数・時刻、講義ごとの自動ダウンロード、結果メール | [skills/ycu-config/SKILL.md](skills/ycu-config/SKILL.md) |
 
 - 今すぐ更新を確認したい（「更新ある？」「監査して」）→ `/ycu-now`。
 - 定期監査が止まった／動いていない → `/ycu-resume`（診断 → ログイン復旧・常駐の起動・取りこぼしの補完）。
 - 初めて使う利用者 → `/ycu-setup`（最後に `/ycu-config` へ続く）。
 - 設定だけ変えたい → `/ycu-config`。
+- 資料を Google Drive などのクラウドにも保存したい → `/ycu-cloud`（`/ycu-config` からも案内される）。
 - Claude Code では `.claude/skills/` から同名のスキルとして呼べる。他のエージェントは `skills/*/SKILL.md` を直接読む。
 
 ## 診断・確認用コマンド（スキルが使う）
@@ -23,6 +25,7 @@
 | `--login` | ブラウザを表示してログイン（初回・セッション切れ。Authenticator の承認は本人が行う） |
 | `--check-teams` | Teams（SharePoint）に入れるか、履修講義のチームが見つかるか（承認が要るときは `--headful`） |
 | `--test-mail` | 自分宛にテストメールを1通送る（ログイン済みが前提） |
+| `--list-drives` / `--test-cloud` | つながっているドライブの一覧 / クラウド保存の複製先に書き込めるか（テストファイルを作って消す） |
 | `--list-courses` | 履修講義の一覧 |
 | `--status` | 現在の設定 |
 

@@ -19,7 +19,8 @@
 | メールを送らずに試す | `--no-mail` |
 | ブラウザを表示して実行 | `--headful` |
 | Teams の講義資料も確認・保存する / やめる | `--teams-on` / `--teams-off` |
-| 保存した資料を別フォルダ（Google Drive の同期フォルダなど）にも複製する / やめる | `--drive-on` / `--drive-off` |
+| 保存した資料をクラウド（Google Drive の同期フォルダなど）にも複製する / やめる | `--cloud-on` / `--cloud-off`（別名 `--drive-on` / `--drive-off`） |
+| 複製先フォルダの設定 / つながっているドライブの一覧 / 書き込みテスト | `--set-cloud-dir フォルダ` / `--list-drives` / `--test-cloud` |
 | 設定した時刻に自動実行する常駐 | `--watch` |
 | Windows ログオン時に `--watch` を自動起動 / 解除 | `--install-task` / `--uninstall-task` |
 | 履修講義の一覧 / 現在の設定 | `--list-courses` / `--status` |
@@ -30,7 +31,7 @@
 - `--check-on` / `--check-off`: 定期チェック。
 - `--download-on` / `--download-off`: チェックで見つかった差分の自動ダウンロード。**定期実行ではチェック ON が前提**。
 - `--teams-on` / `--teams-off`: Teams（SharePoint）の講義資料の確認。初期 OFF。保存は `--download-on` と対象講義（`--set-courses`）に従う。
-- `--drive-on` / `--drive-off`: 保存先（`output/`）の資料を `drive_dir` にも複製する。初期 OFF。複製先は `--set-drive-dir フォルダ`（絶対パス。先に設定しないと ON にできない）。
+- `--cloud-on` / `--cloud-off`（別名 `--drive-on` / `--drive-off`）: 保存先（`output/`）の資料を `drive_dir` にも複製する（クラウド保存）。初期 OFF。複製先は `--set-cloud-dir フォルダ`（別名 `--set-drive-dir`。絶対パス。先に設定しないと ON にできない）。設定の手順はスキル `/ycu-cloud`。
 - `--mail-on` / `--mail-off`: 結果メール。
 - `--mail-always`（初期）/ `--mail-changes-only`: 毎回送る / 更新・保存・エラーがあったときだけ送る。
 - `--on` / `--off`: チェックとダウンロードをまとめて切り替える（メールは変えない）。
@@ -65,7 +66,7 @@
 - Teams の失敗（ログイン・取得）は YCU-Board のチェックを止めず、エラーとして報告する。
 - **Teams にログインできなかったとき**: 結果メールの冒頭に、その旨と対処（`--check-teams --headful` で承認）を載せる。定期実行ならトースト通知も出す。`--mail-changes-only` のときは、これだけを理由にしたメールは**復旧するまで1回だけ**（`data/state.json` の `teams_login_failed` / `teams_login_alert_sent`）。復旧後の最初の結果メールに「復旧しました」と載る。`--status` にも表示される。パスワードは1回しか送信しない。
 
-## 別フォルダへの複製（--drive-on）
+## クラウド保存（--cloud-on）
 `output/` に保存した資料を、同じフォルダ構成のまま `drive_dir`（例: Google Drive for Desktop の同期フォルダ `H:\マイドライブ\…`）にも複製する。Google の認証は使わず、同期は Drive for Desktop が行う。
 - 初回監査・定期監査（`--now` を含む）の各サイクルの最後に実行する。`output/` 全体を見て、**無い・サイズや更新日時が違うファイルだけ**をコピーする（旧版 `_旧版…` も含む。何度実行しても重複しない。Drive が接続されていなかった分も次回に補う）。
 - 複製先のファイルは消さない（`output/` から消したものは複製先に残る）。差分検知の基準は引き続き `output/` / `history.db`。
