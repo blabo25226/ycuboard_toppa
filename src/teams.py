@@ -405,8 +405,8 @@ def _download_pending(context: BrowserContext, course: dict, site: str, summary:
             notify_new_material(course["name"], item["material_title"], item["file_name"])
             time.sleep(delay)
         except Exception as e:  # noqa: BLE001
-            logger.exception("ダウンロード失敗: %s", item["rel_path"])
-            summary["errors"].append(f"{course['name']} / {item['rel_path']}（Teams）: {e}")
+            logger.error("ダウンロード失敗: %s: %s", item["rel_path"], (str(e).splitlines() or [type(e).__name__])[0][:200])
+            summary["errors"].append(f"{course['name']} / {item['rel_path']}（Teams）: {(str(e).splitlines() or [type(e).__name__])[0][:200]}")
 
 
 def local_date(modified: str) -> str:

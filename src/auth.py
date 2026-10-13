@@ -77,22 +77,7 @@ def ensure_logged_in(page: Page, timeout_seconds: int = 60) -> bool:
             except Exception:
                 pass
 
-            # B. メールアドレス入力画面
-            try:
-                email_input = page.locator("input[type='email'], input[name='loginfmt'], #i0116")
-                if email_input.count() > 0 and email_input.first.is_visible():
-                    logger.info(f"メールアドレス入力画面を検出: {email[:4]}*** を入力します。")
-                    email_input.first.fill(email)
-                    time.sleep(0.5)
-                    next_btn = page.locator("input[type='submit'], #idSIButton9, button[type='submit']")
-                    if next_btn.count() > 0:
-                        next_btn.first.click()
-                    time.sleep(2.0)
-                    continue
-            except Exception:
-                pass
-
-            # C. パスワード入力画面
+            # B. パスワード入力画面（メール欄が同時に表示される結合型の画面もあるため、先に判定する）
             try:
                 passwd_input = page.locator("input[type='password'], input[name='passwd'], #i0118")
                 if passwd_input.count() > 0 and passwd_input.first.is_visible():
@@ -107,10 +92,21 @@ def ensure_logged_in(page: Page, timeout_seconds: int = 60) -> bool:
                     password_submitted = True
                     passwd_input.first.fill(password)
                     time.sleep(0.5)
-                    signin_btn = page.locator("input[type='submit'], #idSIButton9, button[type='submit']")
-                    if signin_btn.count() > 0:
-                        signin_btn.first.click()
+                    passwd_input.first.press("Enter")
                     time.sleep(2.5)
+                    continue
+            except Exception:
+                pass
+
+            # C. メールアドレス入力画面
+            try:
+                email_input = page.locator("input[type='email'], input[name='loginfmt'], #i0116")
+                if email_input.count() > 0 and email_input.first.is_visible():
+                    logger.info(f"メールアドレス入力画面を検出: {email[:4]}*** を入力します。")
+                    email_input.first.fill(email)
+                    time.sleep(0.5)
+                    email_input.first.press("Enter")
+                    time.sleep(2.0)
                     continue
             except Exception:
                 pass

@@ -142,7 +142,7 @@ def _run_cycle(context, *, download, targets, send_mail, scheduled, initial, dry
             crawler.sleep()
         except Exception as e:  # noqa: BLE001 - 1講義の失敗で全体を止めない
             logger.exception("講義の巡回に失敗: %s", course["name"])
-            summary["errors"].append(f"{course['name']}: {e}")
+            summary["errors"].append(f"{course['name']}: {_short(e)}")
 
     if cfg["teams_enabled"] and courses:
         run_teams(context, courses, target_ids, summary, dry_run=dry_run, scheduled=scheduled)
@@ -232,5 +232,5 @@ def _download_pending(crawler: YCUBoardCrawler, course: dict, summary: dict) -> 
             logger.info("保存: %s", path)
             notify_new_material(course["name"], item["material_title"], item["file_name"])
         except Exception as e:  # noqa: BLE001
-            logger.exception("ダウンロード失敗: %s", item["file_name"])
-            summary["errors"].append(f"{course['name']} / {item['file_name']}: {e}")
+            logger.error("ダウンロード失敗: %s: %s", item["file_name"], (str(e).splitlines() or [type(e).__name__])[0][:200])
+            summary["errors"].append(f"{course['name']} / {item['file_name']}: {(str(e).splitlines() or [type(e).__name__])[0][:200]}")

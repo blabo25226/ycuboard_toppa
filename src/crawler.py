@@ -6,7 +6,7 @@ import unicodedata
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from playwright.sync_api import Page
+from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 
 from src.config import CONFIG
 from src.downloader import archive_old_version, get_material_target_dir, resolve_save_path
@@ -165,20 +165,45 @@ class YCUBoardCrawler:
             logger.warning("ダウンロード要素が見つかりません: %s", item["file_name"])
             return None
 
-        with self.page.expect_download(timeout=60000) as info:
-            target.first.click()
-        download = info.value
-        if download.failure():
-            logger.error("ダウンロード失敗: %s (%s)", item["file_name"], download.failure())
-            return None
+        # .py など拡張子不明のファイルは、サーバーが Content-Disposition: inline で返すため
+        # ダウンロードイベントが発生せず、別タブでそのまま表示されることがある。
+        download = None
+        popup = None
+        before = set(self.page.context.pages)
+        try:
+            with self.page.expect_download(timeout=15000) as info:
+                target.first.click()
+            download = info.value
+        except PlaywrightTimeoutError:
+            new_pages = [p for p in self.page.context.pages if p not in before]
+            popup = new_pages[-1] if new_pages else None
 
-        # 更新時は、この資料の旧版（記録済みの保存先）を退避してから同じ名前で保存する。
-        # 退避はダウンロード成功後に行う（失敗しても手元のファイルを失わない）。
-        old = Path(item["local_path"]) if item.get("local_path") else None
-        if item["reason"] == "UPDATED" and old and old.exists():
-            archive_old_version(old)
         target_dir = get_material_target_dir(item["course_name"], item["material_title"])
         save_path = resolve_save_path(target_dir, item["file_name"])
-        download.save_as(str(save_path))
+        old = Path(item["local_path"]) if item.get("local_path") else None
+
+        if download is not None:
+            if download.failure():
+                logger.error("ダウンロード失敗: %s (%s)", item["file_name"], download.failure())
+                return None
+            if item["reason"] == "UPDATED" and old and old.exists():
+                archive_old_version(old)
+            download.save_as(str(save_path))
+        elif popup is not None:
+            try:
+                popup.wait_for_load_state("load", timeout=15000)
+                resp = self.page.context.request.get(popup.url)
+                if not resp.ok:
+                    logger.error("ダウンロード失敗（別タブ表示）: %s (HTTP %d)", item["file_name"], resp.status)
+                    return None
+                if item["reason"] == "UPDATED" and old and old.exists():
+                    archive_old_version(old)
+                save_path.write_bytes(resp.body())
+            finally:
+                popup.close()
+        else:
+            logger.warning("ダウンロードを確認できませんでした: %s", item["file_name"])
+            return None
+
         self.sleep()
         return save_path
