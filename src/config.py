@@ -16,6 +16,7 @@ DEFAULT_CONFIG: dict = {
     "check_enabled": False,  # 2. 定期チェック
     "download_enabled": False,  # 3. 更新があった資料の自動ダウンロード
     "teams_enabled": False,  # 5. Teams（SharePoint）の講義資料も確認・ダウンロードする（ダウンロードは3.に従う）
+    "teams_recordings_enabled": False,  # Teams の「Recordings」フォルダ（会議の録画）も対象にする（teams_enabled が前提）
     "drive_enabled": False,  # 6. 保存した資料を drive_dir（Google Drive の同期フォルダなど）にも複製する
     "drive_dir": "",  # 複製先フォルダ（絶対パス）。--set-drive-dir で設定。値は config.json ではなく drive_dir.txt に保存する
     "drive_course_subdir": "",  # 空でなければ、複製先の <講義名>/<この名前>/ の下に入れる（例: toppa）。--set-cloud-subdir で設定

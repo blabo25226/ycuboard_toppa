@@ -126,9 +126,12 @@ def build_report(summary: dict) -> tuple:
 
 
 def _large_note(item: dict) -> str:
-    from src.teams import MAX_FILE_BYTES, is_large
+    from src.teams import MAX_FILE_BYTES, MAX_RECORDING_BYTES, is_large, is_recording
 
-    return f"（{item['size'] / 1e6:.0f} MB。{MAX_FILE_BYTES // 2**20} MB を超えるため保存しません）" if is_large(item) else ""
+    if not is_large(item):
+        return ""
+    limit = MAX_RECORDING_BYTES if is_recording(item["rel_path"]) else MAX_FILE_BYTES
+    return f"（{item['size'] / 1e6:.0f} MB。{limit // 2**20} MB を超えるため保存しません）"
 
 
 def build_login_alert() -> tuple:

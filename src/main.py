@@ -310,6 +310,7 @@ def print_status() -> None:
     print(f"  定期チェック      : {onoff(cfg['check_enabled'])}   (--check-on / --check-off)")
     print(f"  自動ダウンロード  : {onoff(cfg['download_enabled'])}   (--download-on / --download-off)")
     print(f"  Teams の資料      : {onoff(cfg['teams_enabled'])}   (--teams-on / --teams-off)  ダウンロードは「自動ダウンロード」と対象講義に従う")
+    print(f"  Teams の録画      : {onoff(cfg['teams_recordings_enabled'])}   (--recordings-on / --recordings-off)  Teams の資料が ON のときだけ有効")
     print(f"  クラウド保存      : {onoff(cfg['drive_enabled'])}   (--cloud-on / --cloud-off)  複製先: {cfg['drive_dir'] or '(未設定: --set-cloud-dir)'}")
     when = "更新があったときだけ" if cfg["email_only_on_change"] else "毎回"
     print(f"  結果メール        : {onoff(cfg['email_enabled'])}   (--mail-on / --mail-off)  宛先: {mail} / {when} (--mail-changes-only / --mail-always)")
@@ -436,6 +437,8 @@ def build_parser() -> argparse.ArgumentParser:
     sw.add_argument("--download-off", action="store_true")
     sw.add_argument("--teams-on", action="store_true", help="Teams（SharePoint）の講義資料も確認・ダウンロードする")
     sw.add_argument("--teams-off", action="store_true", help="Teams の確認をやめる")
+    sw.add_argument("--recordings-on", action="store_true", help="Teams の「Recordings」フォルダ（会議の録画）も対象にする（2GBまで）")
+    sw.add_argument("--recordings-off", action="store_true", help="Teams の録画を対象から外す")
     sw.add_argument("--drive-on", "--cloud-on", dest="drive_on", action="store_true", help="保存した資料を --set-drive-dir のフォルダ（Google Drive など）にも複製する")
     sw.add_argument("--drive-off", "--cloud-off", dest="drive_off", action="store_true", help="複製をやめる")
     sw.add_argument("--mail-on", action="store_true")
@@ -472,6 +475,10 @@ def apply_settings(args) -> bool:
         changes["teams_enabled"] = True
     if args.teams_off:
         changes["teams_enabled"] = False
+    if args.recordings_on:
+        changes["teams_recordings_enabled"] = True
+    if args.recordings_off:
+        changes["teams_recordings_enabled"] = False
     if args.set_drive_dir:
         from src.drive import validate_drive_dir
 

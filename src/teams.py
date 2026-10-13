@@ -34,10 +34,11 @@ logger = logging.getLogger(__name__)
 
 SP_HOST = "https://yokohamacu.sharepoint.com"
 LIBRARY_ROOT = "Shared Documents/General"  # チャンネル「一般」の「共有済み」
-EXCLUDED_FOLDERS = {"recordings"}  # 会議の録画は大きすぎるので対象外
+EXCLUDED_FOLDERS = {"recordings"}  # 会議の録画（teams_recordings_enabled が OFF のときだけ対象外）
 EXCLUDED_SUFFIXES = (".loop",)  # 会議チャットから自動で作られる Loop の部品。講義資料ではない
 MAX_DEPTH = 6
-MAX_FILE_BYTES = 200 * 1024 * 1024  # これより大きいファイルは保存しない（メモリ・時間の都合。動画など）
+MAX_FILE_BYTES = 200 * 1024 * 1024  # これより大きいファイルは保存しない（メモリ・時間の都合）
+MAX_RECORDING_BYTES = 2 * 1024 * 1024 * 1024  # 録画はブラウザのダウンロード機能を使うため、上限を緩くできる（既定2GB）
 LOGIN_ERROR = "Teams: SharePoint にログインできませんでした（Teams の講義資料は確認していません）"
 
 
@@ -224,9 +225,15 @@ def find_team_sites(page: Page, courses: List[dict], previous: Optional[Dict[str
 
 
 def list_files(page: Page, site: str) -> List[dict]:
-    """サイトの General 配下（録画フォルダを除く）の全ファイル → [{file_id, rel_path, name, modified, size, url}]"""
+    """サイトの General 配下の全ファイル → [{file_id, rel_path, name, modified, size, url}]
+
+    録画フォルダ（Recordings）は teams_recordings_enabled が ON のときだけ含める。
+    """
+    excluded = set(EXCLUDED_FOLDERS)
+    if load_config().get("teams_recordings_enabled"):
+        excluded.discard("recordings")
     root = urlparse(site).path + "/" + LIBRARY_ROOT
-    rows = page.evaluate(_LIST_FILES_JS, [site, root, MAX_DEPTH, sorted(EXCLUDED_FOLDERS)])
+    rows = page.evaluate(_LIST_FILES_JS, [site, root, MAX_DEPTH, sorted(excluded)])
     errors = [r for r in rows if "err" in r]
     if len(errors) == 1 and errors[0]["err"] == 404 and errors[0]["depth"] == 0:
         raise FolderMissing(root)  # チャンネルのフォルダがまだ作られていない（誰もファイルを置いていないチーム）
@@ -253,36 +260,68 @@ def save_dir(course_name: str, rel_path: str) -> Path:
     return OUTPUT_DIR.joinpath(*parts)
 
 
+def is_recording(rel_path: str) -> bool:
+    return rel_path.split("/")[0].lower() == "recordings"
+
+
 def download_file(context: BrowserContext, item: dict) -> Optional[Path]:
     """1ファイルを保存して保存先パスを返す。失敗時は None。
 
     更新のときは旧版を退避してから保存し直す。サイト上で名前変更・移動されていたら新しい名前・場所に保存する
-    （旧版は元の場所に `_旧版` として残る）。
+    （旧版は元の場所に `_旧版` として残る）。Recordings 配下（会議の録画）は大きいため、API で直接取得して
+    メモリに載せるのではなく、ブラウザのダウンロード機能でディスクに直接保存する。
     """
     path = quote(item["url"].replace("'", "''"), safe="/")  # decodedurl なら名前の % や # もそのまま扱える
     api = f"{item['site']}/_api/web/GetFileByServerRelativePath(decodedurl='{path}')/$value"
-    resp = context.request.get(api, timeout=300000)
-    if not resp.ok:
-        logger.error("ダウンロード失敗: %s (HTTP %s)", item["rel_path"], resp.status)
-        return None
-    body = resp.body()
-    if item["size"] and len(body) != item["size"]:
-        logger.error("ダウンロード失敗: %s（サイズ不一致 %d / %d）", item["rel_path"], len(body), item["size"])
-        return None
+    recording = is_recording(item["rel_path"])
 
-    directory = save_dir(item["course_name"], item["rel_path"])
-    directory.mkdir(parents=True, exist_ok=True)
-    old = Path(item["local_path"]) if item.get("local_path") else None
-    if item["reason"] == "UPDATED" and old and old.exists():
-        archive_old_version(old)
-        same_place = old.parent == directory and old.name == sanitize_filename(item["name"])
-        dest = old if same_place else resolve_save_path(directory, item["name"])
-    else:
-        dest = resolve_save_path(directory, item["name"])
-    tmp = dest.with_name(dest.name + ".part")
-    tmp.write_bytes(body)
-    tmp.replace(dest)
-    return dest
+    page = None
+    try:
+        if recording:
+            page = context.new_page()
+            with page.expect_download(timeout=600000) as info:
+                try:
+                    page.goto(api)
+                except Exception:
+                    pass  # ダウンロードが始まると goto() 自体が例外になる（想定どおり）
+            download = info.value
+            failure = download.failure()
+            if failure:
+                logger.error("ダウンロード失敗: %s (%s)", item["rel_path"], failure)
+                return None
+            tmp_path = download.path()
+            size = tmp_path.stat().st_size if tmp_path else None
+        else:
+            resp = context.request.get(api, timeout=300000)
+            if not resp.ok:
+                logger.error("ダウンロード失敗: %s (HTTP %s)", item["rel_path"], resp.status)
+                return None
+            body = resp.body()
+            size = len(body)
+
+        if item["size"] and size != item["size"]:
+            logger.error("ダウンロード失敗: %s（サイズ不一致 %s / %d）", item["rel_path"], size, item["size"])
+            return None
+
+        directory = save_dir(item["course_name"], item["rel_path"])
+        directory.mkdir(parents=True, exist_ok=True)
+        old = Path(item["local_path"]) if item.get("local_path") else None
+        if item["reason"] == "UPDATED" and old and old.exists():
+            archive_old_version(old)
+            same_place = old.parent == directory and old.name == sanitize_filename(item["name"])
+            dest = old if same_place else resolve_save_path(directory, item["name"])
+        else:
+            dest = resolve_save_path(directory, item["name"])
+        tmp = dest.with_name(dest.name + ".part")
+        if recording:
+            download.save_as(str(tmp))
+        else:
+            tmp.write_bytes(body)
+        tmp.replace(dest)
+        return dest
+    finally:
+        if page:
+            page.close()
 
 
 # ---------- 1サイクル ----------
@@ -369,7 +408,8 @@ def _login_failed(summary: dict, *, dry_run: bool, scheduled: bool) -> None:
 
 
 def is_large(item: dict) -> bool:
-    return (item.get("size") or 0) > MAX_FILE_BYTES
+    limit = MAX_RECORDING_BYTES if is_recording(item["rel_path"]) else MAX_FILE_BYTES
+    return (item.get("size") or 0) > limit
 
 
 def _download_pending(context: BrowserContext, course: dict, site: str, summary: dict, *, dry_run: bool) -> None:
