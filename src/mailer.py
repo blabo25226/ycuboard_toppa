@@ -196,6 +196,25 @@ def _send_web(context: BrowserContext, to: str, subject: str, body: str) -> None
         page.close()
 
 
+MAIL_HISTORY_FILE = BASE_DIR / "logs" / "mail_history.log"  # 送信したメールの履歴（logs/ は git 管理外）
+
+
+def _archive_sent_mail(to: str, subject: str, body: str, how: str) -> None:
+    """送信に成功したメールの本文を記録する。失敗してもメール送信自体は止めない。"""
+    try:
+        MAIL_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with MAIL_HISTORY_FILE.open("a", encoding="utf-8") as f:
+            f.write(f"\n{'=' * 60}\n")
+            f.write(f"日時: {datetime.now():%Y-%m-%d %H:%M:%S}\n")
+            f.write(f"宛先: {to}\n")
+            f.write(f"件名: {subject}\n")
+            f.write(f"送信方法: {how}\n")
+            f.write("-" * 60 + "\n")
+            f.write(body + "\n")
+    except Exception as e:  # noqa: BLE001 - 記録の失敗でメール送信自体を失敗扱いにしない
+        logger.warning("送信履歴の保存に失敗: %s", str(e).splitlines()[0][:200])
+
+
 def send_email(subject: str, body: str, context: BrowserContext = None) -> bool:
     """メール送信。成功なら True。失敗しても例外は投げず False（巡回自体は止めない）。"""
     cfg = load_config()
@@ -212,6 +231,7 @@ def send_email(subject: str, body: str, context: BrowserContext = None) -> bool:
             else:
                 _send_smtp(cfg, to, subject, body)
             logger.info("結果メールを送信しました (%s -> %s)", how, to)
+            _archive_sent_mail(to, subject, body, how)
             return True
         except Exception as e:  # noqa: BLE001 - 送信失敗は記録して次の方法へ
             logger.warning("メール送信に失敗 (%s): %s", how, str(e).splitlines()[0][:200])
